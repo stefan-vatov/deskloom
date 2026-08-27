@@ -12,8 +12,8 @@ It wraps [`hyprloom`](https://github.com/thethracian/hyprloom) and provides:
 - snapshot listing, refresh, and deletion;
 - settings for starting with Omarchy and choosing a default snapshot;
 - automatic default-snapshot restore a few seconds after Omarchy starts;
-- a one-click AUR install action when `hyprloom` is missing. The installer opens
-  in an Omarchy floating terminal so sudo can prompt normally.
+- a one-click helper install action when `hyprloom` is missing. The installer
+  opens in an Omarchy floating terminal so sudo can prompt normally.
 
 ## Development install
 
@@ -56,12 +56,16 @@ normal Omarchy marketplace also enables the default-preset behavior.
 Omarchy's plugin clone/install command intentionally does not execute plugin
 code or install hooks, so a plugin cannot safely force a package install merely
 because it was cloned from a website. Deskloom detects `hyprloom` and exposes a
-first-run install button. That button opens Omarchy's visible package installer:
+first-run install button. That button opens an Omarchy floating terminal and
+runs the idempotent helper installer. It first tries the AUR package:
 
 ```bash
 omarchy-launch-floating-terminal-with-presentation omarchy-pkg-aur-add hyprloom
 ```
 
-The AUR helper uses an idempotent `yay --needed` install. The user sees the
-normal terminal output and can enter their sudo password there; Deskloom never
-collects or handles the password itself.
+The AUR helper uses an idempotent `yay --needed` install. If the package has not
+been published yet, the installer uses the local `~/code/hyprloom` checkout or,
+after the fork's tagged source is published, clones that tag and builds it in
+the user's home directory. The user sees the normal terminal output and can
+enter their sudo password there; Deskloom never collects or handles the
+password itself.

@@ -38,6 +38,8 @@ Panel {
   property bool operationTimedOut: false
   property bool recoveryRunning: false
   property bool recoveryTimedOut: false
+  property bool startupRecoveryAttempted: false
+  property bool startupRecoveryTimedOut: false
 
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
   readonly property string defaultPreset: String(setting("defaultPreset", "") || "")
@@ -72,6 +74,15 @@ Panel {
 
   function refreshList() {
     if (!helperInstalled) return
+    if (!startupRecoveryAttempted) {
+      refreshPending = true
+      startStartupRecovery()
+      return
+    }
+    if (startupRecoveryProcess.running) {
+      refreshPending = true
+      return
+    }
     if (listProcess.running) {
       refreshPending = true
       return
@@ -81,6 +92,18 @@ Panel {
     listProcess.command = ["hyprloom", "list"]
     listProcess.running = true
     listTimeout.restart()
+  }
+
+  function startStartupRecovery() {
+    if (!root.helperInstalled || root.startupRecoveryAttempted || startupRecoveryProcess.running)
+      return
+    root.startupRecoveryAttempted = true
+    root.startupRecoveryTimedOut = false
+    root.busy = true
+    root.statusText = "Checking for interrupted replacement…"
+    startupRecoveryProcess.command = ["hyprloom", "recover"]
+    startupRecoveryProcess.running = true
+    startupRecoveryTimeout.restart()
   }
 
   function persistSettings(values) {
@@ -137,6 +160,18 @@ Panel {
       }
       bootSettingsReady = true
     }
+
+    if (root.helperInstalled) {
+      if (root.startupRecoveryProcessRunning()) {
+        bootRestoreTimer.interval = 1000
+        bootRestoreTimer.restart()
+        return
+      }
+    } else if (helperCheck.running) {
+      bootRestoreTimer.interval = 1000
+      bootRestoreTimer.restart()
+      return
+    }
     bootRestoreAttempted = true
 
     if (!root.startOnLogin || root.defaultPreset === "") return
@@ -146,6 +181,14 @@ Panel {
     busy = true
     statusText = "Restoring default preset…"
     bootHelperProbe.running = true
+  }
+
+  function startupRecoveryProcessRunning() {
+    if (!root.startupRecoveryAttempted) {
+      root.startStartupRecovery()
+      return true
+    }
+    return startupRecoveryProcess.running
   }
 
   function launchBootRestore() {
@@ -211,7 +254,9 @@ Panel {
       + "result_file=\"$lock_dir/aur-install-result-$1\"; "
       + "if [ -L \"$result_file\" ] || [ -e \"$result_file\" ] && [ ! -f \"$result_file\" ]; then exit 1; fi; "
       + "rm -f \"$result_file\"; "
-      + "if omarchy-pkg-aur-add hyprloom; then result=success; code=0; "
+      + "installer=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/thethracian.deskloom/install-helper.sh\"; "
+      + "if [ ! -x \"$installer\" ]; then code=1; result=failure; "
+      + "elif \"$installer\"; then code=0; result=success; "
       + "else code=$?; result=failure; fi; "
       + "temporary=$(mktemp \"$lock_dir/.aur-install-result.XXXXXX\"); "
       + "printf \"%s\\n\" \"$result\" > \"$temporary\"; chmod 600 \"$temporary\"; "
@@ -266,6 +311,15 @@ Panel {
     return clean
   }
 
+  function isValidSaveName(value) {
+    var clean = root.normalizeName(value)
+    return clean !== ""
+      && clean !== "."
+      && clean !== ".."
+      && clean.length <= 128
+      && clean.indexOf("autosave-") !== 0
+  }
+
   function runOperation(kind, name) {
     if (busy) return
     if (!helperInstalled) return
@@ -273,8 +327,8 @@ Panel {
     var operationArgument = String(name || "")
     if (kind === "save") {
       operationArgument = normalizeName(name)
-      if (operationArgument === "") {
-        statusText = "Enter a snapshot name."
+      if (!isValidSaveName(name)) {
+        statusText = "Use a unique name; '.', '..', autosave names, and names over 128 characters are reserved."
         return
       }
     }
@@ -466,6 +520,19 @@ Panel {
   }
 
   Timer {
+    id: startupRecoveryTimeout
+    interval: 180000
+    repeat: false
+    onTriggered: {
+      if (!startupRecoveryProcess.running) return
+      root.startupRecoveryTimedOut = true
+      startupRecoveryProcess.running = false
+      root.busy = true
+      root.statusText = "Startup recovery is still stopping…"
+    }
+  }
+
+  Timer {
     id: operationTimeout
     interval: 180000
     repeat: false
@@ -533,7 +600,42 @@ Panel {
         return
       }
       root.helperInstalled = true
-      root.launchBootRestore()
+      if (root.startupRecoveryProcessRunning()) {
+        root.bootRestoreAttempted = false
+        bootRestoreTimer.interval = 1000
+        bootRestoreTimer.restart()
+      } else {
+        root.launchBootRestore()
+      }
+    }
+  }
+
+  Process {
+    id: startupRecoveryProcess
+    stdout: StdioCollector {
+      id: startupRecoveryOutput
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: startupRecoveryError
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      startupRecoveryTimeout.stop()
+      var timedOut = root.startupRecoveryTimedOut
+      root.startupRecoveryTimedOut = false
+      root.busy = false
+
+      if (timedOut) {
+        root.statusText = "Startup recovery timed out; continuing carefully."
+      } else if (exitCode !== 0) {
+        var error = String(startupRecoveryError.text || "").trim().split("\n")[0]
+        root.statusText = "Startup recovery failed"
+          + (error === "" ? ". Continuing carefully." : ": " + error)
+      }
+
+      if (root.refreshPending)
+        Qt.callLater(function() { if (root.helperInstalled) root.refreshList() })
     }
   }
 
@@ -878,7 +980,7 @@ Panel {
             foreground: root.foreground
             fontFamily: root.bar.fontFamily
             bordered: true
-            enabled: !root.busy && root.normalizeName(root.saveName) !== ""
+            enabled: !root.busy && root.isValidSaveName(root.saveName)
             onClicked: root.runOperation("save", root.saveName)
           }
         }

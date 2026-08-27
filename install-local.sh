@@ -261,6 +261,7 @@ trap cleanup EXIT
 install -Dm644 "$source_dir/manifest.json" "$staging_dir/manifest.json"
 install -Dm644 "$source_dir/Panel.qml" "$staging_dir/Panel.qml"
 install -Dm644 "$source_dir/README.md" "$staging_dir/README.md"
+install -Dm0755 "$source_dir/install-helper.sh" "$staging_dir/install-helper.sh"
 omarchy plugin validate "$staging_dir"
 
 plugin_state_json=$(omarchy plugin list --json)
