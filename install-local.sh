@@ -318,10 +318,12 @@ if [ "$registered" != true ]; then
   exit 1
 fi
 
-if ! omarchy plugin list --json | jq -e 'any(.[]; .id == "thethracian.deskloom" and .enabled == true)' >/dev/null; then
+if [ "$previous_enabled" = unknown ] \
+  && ! omarchy plugin list --json | jq -e 'any(.[]; .id == "thethracian.deskloom" and .enabled == true)' >/dev/null; then
   omarchy plugin enable thethracian.deskloom --after omarchy.tray
 fi
-if ! omarchy plugin list --json | jq -e 'any(.[]; .id == "thethracian.deskloom" and .enabled == true)' >/dev/null; then
+if [ "$previous_enabled" = unknown ] \
+  && ! omarchy plugin list --json | jq -e 'any(.[]; .id == "thethracian.deskloom" and .enabled == true)' >/dev/null; then
   echo "Plugin was registered but could not be enabled; the previous install will be restored." >&2
   exit 1
 fi

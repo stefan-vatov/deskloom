@@ -170,13 +170,17 @@ Panel {
         + "instance_id=\"${HYPRLAND_INSTANCE_SIGNATURE:-${WAYLAND_DISPLAY:-deskloom}}\"; "
         + "if [ -n \"$boot_id\" ]; then claim_key=\"$boot_id:${session_id:-$instance_id}\"; "
         + "else claim_key=\"${session_id:-$instance_id}\"; fi; "
-        + "if [ -f \"$claim_file\" ]; then previous=\"\"; IFS= read -r previous < \"$claim_file\" || true; "
-        + "if [ \"$previous\" = \"$claim_key\" ]; then exit 76; fi; fi; "
+        + "if [ -f \"$claim_file\" ]; then previous=\"\"; previous_status=\"\"; "
+        + "{ IFS= read -r previous || true; IFS= read -r previous_status || true; } < \"$claim_file\"; "
+        + "if [ \"$previous\" = \"$claim_key\" ] && [ \"$previous_status\" = complete ]; then exit 76; fi; fi; "
         + "temporary=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
-        + "printf \"%s\\n\" \"$claim_key\" > \"$temporary\"; chmod 600 \"$temporary\"; "
+        + "printf \"%s\\n%s\\n\" \"$claim_key\" in-progress > \"$temporary\"; chmod 600 \"$temporary\"; "
         + "mv -f \"$temporary\" \"$claim_file\"; "
         + "trap 'status=$?; if [ \"$status\" -ne 0 ]; then rm -f -- \"$claim_file\" || true; fi; exit \"$status\"' EXIT; "
-        + "hyprloom restore \"$1\" --reconcile",
+        + "if hyprloom restore \"$1\" --reconcile; then restore_status=0; else restore_status=$?; fi; "
+        + "if [ \"$restore_status\" -eq 0 ]; then completed=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
+        + "printf \"%s\\n%s\\n\" \"$claim_key\" complete > \"$completed\"; chmod 600 \"$completed\"; "
+        + "mv -f \"$completed\" \"$claim_file\"; fi; exit \"$restore_status\"",
       "deskloom", root.bootRestorePreset
     ]
     bootRestoreTimedOut = false
@@ -538,8 +542,16 @@ Panel {
         root.refreshList()
       } else {
         var error = String(bootRestoreError.text || "").trim().split("\n")[0]
-        root.statusText = "Default preset restore failed"
-          + (error === "" ? "." : ": " + error)
+        if (root.bootRestoreRetries < 3) {
+          root.bootRestoreRetries += 1
+          root.busy = true
+          root.statusText = "Default preset restore failed; retrying…"
+          bootRestoreRetryTimer.interval = 1000 * root.bootRestoreRetries
+          bootRestoreRetryTimer.restart()
+        } else {
+          root.statusText = "Default preset restore failed"
+            + (error === "" ? "." : ": " + error)
+        }
       }
     }
   }
