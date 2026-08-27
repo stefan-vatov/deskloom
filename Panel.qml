@@ -16,6 +16,8 @@ Panel {
   property bool busy: false
   property bool installingHelper: false
   property bool installerTimedOut: false
+  property bool installerFinished: false
+  property string installerAttemptId: ""
   property bool settingsOpen: false
   property string statusText: ""
   property string saveName: "work"
@@ -120,8 +122,8 @@ Panel {
 
   function launchBootRestore() {
     // Bar widgets are instantiated once per monitor.  A user should get one
-    // boot restore, not one restore per monitor, so serialize the short-lived
-    // operation with a user-scoped flock lock.
+    // boot restore, not one restore per monitor, so serialize the operation
+    // with a user-scoped lock and a per-login claim.
     bootRestoreProcess.command = [
       "bash", "-c",
       "set -eu; umask 077; "
@@ -129,6 +131,17 @@ Panel {
         + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; "
         + "test -O \"$lock_dir\"; exec 9>\"$lock_dir/boot.lock\"; "
         + "flock -n 9 || exit 75; "
+        + "claim_file=\"$lock_dir/boot-claim\"; "
+        + "if [ -L \"$claim_file\" ] || [ -e \"$claim_file\" ] && [ ! -f \"$claim_file\" ]; then exit 1; fi; "
+        + "claim_key=\"${XDG_SESSION_ID:-}\"; "
+        + "if [ -z \"$claim_key\" ] && [ -r /proc/sys/kernel/random/boot_id ]; then "
+        + "claim_key=$(cat /proc/sys/kernel/random/boot_id); fi; "
+        + "claim_key=\"${claim_key:-${WAYLAND_DISPLAY:-deskloom}}\"; "
+        + "if [ -f \"$claim_file\" ]; then previous=\"\"; IFS= read -r previous < \"$claim_file\" || true; "
+        + "if [ \"$previous\" = \"$claim_key\" ]; then exit 76; fi; fi; "
+        + "temporary=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
+        + "printf \"%s\\n\" \"$claim_key\" > \"$temporary\"; chmod 600 \"$temporary\"; "
+        + "mv -f \"$temporary\" \"$claim_file\"; "
         + "exec hyprloom restore \"$1\" --reconcile",
       "deskloom", root.bootRestorePreset
     ]
@@ -140,6 +153,8 @@ Panel {
   function openHelperInstaller() {
     if (busy || helperInstalled) return
     installerTimedOut = false
+    installerFinished = false
+    installerAttemptId = String(Date.now())
     installingHelper = true
     busy = true
     statusText = "Opening the installer terminal…"
@@ -148,13 +163,36 @@ Panel {
       + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
       + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; test -O \"$lock_dir\"; "
       + "exec 9>\"$lock_dir/aur-install.lock\"; flock -n 9 || exit 75; "
-      + "exec omarchy-pkg-aur-add hyprloom'"
+      + "result_file=\"$lock_dir/aur-install-result-$1\"; "
+      + "if [ -L \"$result_file\" ] || [ -e \"$result_file\" ] && [ ! -f \"$result_file\" ]; then exit 1; fi; "
+      + "rm -f \"$result_file\"; "
+      + "if omarchy-pkg-aur-add hyprloom; then result=success; code=0; "
+      + "else code=$?; result=failure; fi; "
+      + "temporary=$(mktemp \"$lock_dir/.aur-install-result.XXXXXX\"); "
+      + "printf \"%s\\n\" \"$result\" > \"$temporary\"; chmod 600 \"$temporary\"; "
+      + "mv -f \"$temporary\" \"$result_file\"; exit \"$code\"' deskloom "
+      + installerAttemptId
     Quickshell.execDetached([
       "omarchy-launch-floating-terminal-with-presentation",
       installCommand
     ])
     installPoll.start()
     installTimeout.start()
+  }
+
+  function checkInstallerResult() {
+    if (!root.installingHelper || installerResultProbe.running) return
+    installerResultProbe.command = [
+      "bash", "-c",
+      "set -eu; lock_dir=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/deskloom\"; "
+        + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
+        + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; test -O \"$lock_dir\"; "
+        + "result_file=\"$lock_dir/aur-install-result-$1\"; "
+        + "if [ -L \"$result_file\" ] || [ -e \"$result_file\" ] && [ ! -f \"$result_file\" ]; then exit 1; fi; "
+        + "if [ -f \"$result_file\" ]; then cat \"$result_file\"; fi",
+      "deskloom", installerAttemptId
+    ]
+    installerResultProbe.running = true
   }
 
   function checkInstallerLock() {
@@ -259,8 +297,35 @@ Panel {
     repeat: true
     onTriggered: {
       root.checkHelper()
-      if (root.installingHelper && root.installerTimedOut)
-        root.checkInstallerLock()
+      if (root.installingHelper) {
+        root.checkInstallerResult()
+        if (root.installerTimedOut) root.checkInstallerLock()
+      }
+    }
+  }
+
+  Process {
+    id: installerResultProbe
+    stdout: StdioCollector {
+      id: installerResultOutput
+      waitForEnd: true
+    }
+    onExited: function() {
+      if (!root.installingHelper) return
+      var result = String(installerResultOutput.text || "").trim()
+      if (result === "failure") {
+        root.installerFinished = true
+        root.installingHelper = false
+        root.busy = false
+        root.statusText = "Installation failed. Try again."
+        installPoll.stop()
+        installTimeout.stop()
+      } else if (result === "success") {
+        root.installerFinished = true
+        root.installerTimedOut = false
+        root.statusText = "Installer finished; checking hyprloom…"
+        root.checkHelper()
+      }
     }
   }
 
@@ -365,8 +430,15 @@ Panel {
         root.refreshList()
       } else {
         root.snapshots = []
-        if (!root.installingHelper && !root.busy)
+        if (root.installingHelper && root.installerFinished) {
+          root.installingHelper = false
+          root.busy = false
+          root.statusText = "Installer finished but hyprloom is not available. Try again."
+          installPoll.stop()
+          installTimeout.stop()
+        } else if (!root.installingHelper && !root.busy) {
           root.statusText = "hyprloom is not installed."
+        }
       }
     }
   }
@@ -413,6 +485,8 @@ Panel {
         } else {
           root.statusText = "Default preset restore is already running."
         }
+      } else if (exitCode === 76) {
+        root.statusText = "Default preset already restored this session."
       } else if (exitCode === 0) {
         root.statusText = "Default preset reconciled: '" + root.bootRestorePreset + "'."
         root.refreshList()
