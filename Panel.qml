@@ -27,6 +27,11 @@ Panel {
   property bool bootSettingsReady: false
   property int bootSettingsPolls: 0
   property string bootRestorePreset: ""
+  property int bootRestoreRetries: 0
+  property bool bootRestoreTimedOut: false
+  property bool listTimedOut: false
+  property bool refreshPending: false
+  property bool operationTimedOut: false
 
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
   readonly property string defaultPreset: String(setting("defaultPreset", "") || "")
@@ -60,9 +65,16 @@ Panel {
   }
 
   function refreshList() {
-    if (!helperInstalled || listProcess.running) return
+    if (!helperInstalled) return
+    if (listProcess.running) {
+      refreshPending = true
+      return
+    }
+    refreshPending = false
+    listTimedOut = false
     listProcess.command = ["hyprloom", "list"]
     listProcess.running = true
+    listTimeout.restart()
   }
 
   function persistSettings(values) {
@@ -99,6 +111,7 @@ Panel {
     if (!root.startOnLogin || root.defaultPreset === "") return
 
     bootRestorePreset = root.defaultPreset
+    bootRestoreRetries = 0
     busy = true
     statusText = "Restoring default preset…"
     bootHelperProbe.running = true
@@ -118,7 +131,9 @@ Panel {
         + "exec hyprloom restore \"$1\" --reconcile",
       "deskloom", root.bootRestorePreset
     ]
+    bootRestoreTimedOut = false
     bootRestoreProcess.running = true
+    bootRestoreTimeout.restart()
   }
 
   function openHelperInstaller() {
@@ -148,6 +163,7 @@ Panel {
 
     operationKind = kind
     operationName = String(name || "")
+    operationTimedOut = false
     busy = true
     statusText = "Working…"
 
@@ -168,6 +184,7 @@ Panel {
     }
 
     operationProcess.running = true
+    operationTimeout.restart()
   }
 
   function parseList(output) {
@@ -236,6 +253,53 @@ Panel {
     }
   }
 
+  Timer {
+    id: bootRestoreTimeout
+    interval: 180000
+    repeat: false
+    onTriggered: {
+      if (!bootRestoreProcess.running) return
+      root.bootRestoreTimedOut = true
+      bootRestoreProcess.running = false
+      root.busy = false
+      root.statusText = "Default preset restore timed out. Try again later."
+    }
+  }
+
+  Timer {
+    id: bootRestoreRetryTimer
+    interval: 1500
+    repeat: false
+    onTriggered: {
+      if (root.bootRestorePreset !== "") root.launchBootRestore()
+    }
+  }
+
+  Timer {
+    id: listTimeout
+    interval: 30000
+    repeat: false
+    onTriggered: {
+      if (!listProcess.running) return
+      root.listTimedOut = true
+      listProcess.running = false
+      root.statusText = "Refreshing snapshots timed out."
+    }
+  }
+
+  Timer {
+    id: operationTimeout
+    interval: 180000
+    repeat: false
+    onTriggered: {
+      if (!operationProcess.running) return
+      root.operationTimedOut = true
+      operationProcess.running = false
+      root.busy = false
+      root.statusText = "Operation timed out. Try again."
+    }
+  }
+
   Process {
     id: helperCheck
     stdout: StdioCollector {
@@ -253,6 +317,10 @@ Panel {
           installTimeout.stop()
         }
         root.refreshList()
+      } else {
+        root.snapshots = []
+        if (!root.installingHelper && !root.busy)
+          root.statusText = "hyprloom is not installed."
       }
     }
   }
@@ -281,9 +349,22 @@ Panel {
       waitForEnd: true
     }
     onExited: function(exitCode) {
+      bootRestoreTimeout.stop()
+      if (root.bootRestoreTimedOut) {
+        root.bootRestoreTimedOut = false
+        return
+      }
       root.busy = false
       if (exitCode === 75) {
-        root.statusText = "Default preset restore already running."
+        if (root.bootRestoreRetries < 3) {
+          root.bootRestoreRetries += 1
+          root.busy = true
+          root.statusText = "Default preset restore is busy; retrying…"
+          bootRestoreRetryTimer.interval = 1000 * root.bootRestoreRetries
+          bootRestoreRetryTimer.restart()
+        } else {
+          root.statusText = "Default preset restore is already running."
+        }
       } else if (exitCode === 0) {
         root.statusText = "Default preset reconciled: '" + root.bootRestorePreset + "'."
         root.refreshList()
@@ -306,6 +387,15 @@ Panel {
       waitForEnd: true
     }
     onExited: function(exitCode) {
+      listTimeout.stop()
+      if (root.listTimedOut) {
+        root.listTimedOut = false
+        return
+      }
+      if (!root.helperInstalled) {
+        root.snapshots = []
+        return
+      }
       if (exitCode === 0) {
         root.parseList(listOutput.text)
       } else {
@@ -313,6 +403,8 @@ Panel {
         root.statusText = "Could not refresh snapshots"
           + (error === "" ? "." : ": " + error)
       }
+      if (root.refreshPending)
+        Qt.callLater(function() { if (root.helperInstalled) root.refreshList() })
     }
   }
 
@@ -327,6 +419,11 @@ Panel {
       waitForEnd: true
     }
     onExited: function(exitCode) {
+      operationTimeout.stop()
+      if (root.operationTimedOut) {
+        root.operationTimedOut = false
+        return
+      }
       root.busy = false
       if (exitCode === 0) {
         if (root.operationKind === "delete" && root.defaultPreset === root.operationName)
@@ -736,7 +833,7 @@ Panel {
             leftAlign: true
             bordered: true
             active: modelData.name === root.defaultPreset
-            enabled: !root.busy
+            enabled: !root.busy && root.helperInstalled
             onClicked: root.setDefaultPreset(modelData.name)
           }
         }
