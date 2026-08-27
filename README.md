@@ -70,5 +70,5 @@ the user's home directory. The user sees the normal terminal output and can
 enter their sudo password there; Deskloom never collects or handles the
 password itself.
 
-The installer accepts only `hyprloom 0.3.5` and the pinned fork revision, so an
+The installer accepts only `hyprloom 0.3.6` and the pinned fork revision, so an
 older binary or stale checkout cannot silently satisfy the dependency check.

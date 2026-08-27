@@ -41,8 +41,8 @@ Panel {
   property bool startupRecoveryAttempted: false
   property bool startupRecoveryTimedOut: false
 
-  readonly property string helperVersion: "0.3.5"
-  readonly property string helperSourceCommit: "c261295f74d64d1b914288144086e00bfea93155"
+  readonly property string helperVersion: "0.3.6"
+  readonly property string helperSourceCommit: "3c0dc714a5874cbe32fba256df9f61fb1df496d7"
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
   readonly property string defaultPreset: String(setting("defaultPreset", "") || "")
 
@@ -244,8 +244,16 @@ Panel {
         + "temporary=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
         + "printf \"%s\\n%s\\n\" \"$claim_key\" in-progress > \"$temporary\"; chmod 600 \"$temporary\"; "
         + "mv -f \"$temporary\" \"$claim_file\"; "
-        + "trap 'status=$?; if [ \"$status\" -ne 0 ]; then rm -f -- \"$claim_file\" || true; fi; exit \"$status\"' EXIT; "
-        + "if \"$HOME/.local/bin/hyprloom\" restore \"$1\" --reconcile; then restore_status=0; else restore_status=$?; fi; "
+        + "child_pid=\"\"; "
+        + "cleanup() { status=$?; "
+        + "if [ -n \"$child_pid\" ]; then kill -TERM \"$child_pid\" 2>/dev/null || true; "
+        + "wait \"$child_pid\" 2>/dev/null || true; fi; "
+        + "if [ \"$status\" -ne 0 ]; then rm -f -- \"$claim_file\" || true; fi; "
+        + "trap - EXIT TERM INT; exit \"$status\"; }; "
+        + "trap cleanup EXIT TERM INT; "
+        + "\"$HOME/.local/bin/hyprloom\" restore \"$1\" --reconcile & child_pid=$!; "
+        + "if wait \"$child_pid\"; then restore_status=0; else restore_status=$?; fi; "
+        + "child_pid=\"\"; "
         + "if [ \"$restore_status\" -eq 0 ]; then completed=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
         + "printf \"%s\\n%s\\n\" \"$claim_key\" complete > \"$completed\"; chmod 600 \"$completed\"; "
         + "mv -f \"$completed\" \"$claim_file\"; fi; exit \"$restore_status\"",
@@ -664,6 +672,10 @@ Panel {
 
   Process {
     id: bootRestoreProcess
+    stdout: StdioCollector {
+      id: bootRestoreOutput
+      waitForEnd: true
+    }
     stderr: StdioCollector {
       id: bootRestoreError
       waitForEnd: true
@@ -693,6 +705,14 @@ Panel {
         root.statusText = "Default preset reconciled: '" + root.bootRestorePreset + "'."
         root.refreshList()
       } else {
+        var output = String(bootRestoreOutput.text || "")
+        var onlySafeSkips = output.indexOf("SKIP:") >= 0
+          && output.indexOf("FAIL:") < 0
+        if (onlySafeSkips) {
+          root.statusText = "Default preset partially applied; some windows were skipped safely."
+          root.refreshList()
+          return
+        }
         var error = String(bootRestoreError.text || "").trim().split("\n")[0]
         if (root.bootRestoreRetries < 3) {
           root.bootRestoreRetries += 1
