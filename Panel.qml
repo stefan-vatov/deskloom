@@ -36,6 +36,8 @@ Panel {
   property bool listTimedOut: false
   property bool refreshPending: false
   property bool operationTimedOut: false
+  property bool recoveryRunning: false
+  property bool recoveryTimedOut: false
 
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
   readonly property string defaultPreset: String(setting("defaultPreset", "") || "")
@@ -261,21 +263,30 @@ Panel {
     var clean = String(value || "").trim().toLowerCase()
     clean = clean.replace(/[^a-z0-9._-]+/g, "-")
     clean = clean.replace(/^-+|-+$/g, "")
-    return clean === "" ? "workspace" : clean
+    return clean
   }
 
   function runOperation(kind, name) {
     if (busy) return
     if (!helperInstalled) return
 
+    var operationArgument = String(name || "")
+    if (kind === "save") {
+      operationArgument = normalizeName(name)
+      if (operationArgument === "") {
+        statusText = "Enter a snapshot name."
+        return
+      }
+    }
+
     operationKind = kind
-    operationName = String(name || "")
+    operationName = operationArgument
     operationTimedOut = false
     busy = true
     statusText = "Working…"
 
     if (kind === "save") {
-      operationProcess.command = ["hyprloom", "save", normalizeName(name), "--force"]
+      operationProcess.command = ["hyprloom", "save", operationArgument, "--force"]
     } else if (kind === "restore") {
       operationProcess.command = ["hyprloom", "restore", name, "--reconcile"]
     } else if (kind === "replace") {
@@ -325,6 +336,13 @@ Panel {
     var source = preferError && error !== "" ? error : (output !== "" ? output : error)
     var firstLine = source.split("\n")[0].trim()
     return firstLine !== "" ? firstLine : "Done"
+  }
+
+  function startTimedOutReplaceRecovery() {
+    root.recoveryTimedOut = false
+    recoveryProcess.command = ["hyprloom", "recover"]
+    recoveryProcess.running = true
+    recoveryTimeout.restart()
   }
 
   Component.onCompleted: {
@@ -454,9 +472,18 @@ Panel {
     onTriggered: {
       if (!operationProcess.running) return
       root.operationTimedOut = true
-      operationProcess.running = false
       root.busy = true
-      root.statusText = "Operation is still stopping…"
+      if (root.operationKind === "replace") {
+        // Replace may already have closed part of the desktop and left its
+        // transaction marker behind.  Stop the helper, then invoke the
+        // helper's recovery-only path before releasing the UI lock.
+        root.recoveryRunning = true
+        operationProcess.running = false
+        root.statusText = "Replace timed out; recovering desktop…"
+      } else {
+        operationProcess.running = false
+        root.statusText = "Operation is still stopping…"
+      }
     }
   }
 
@@ -605,10 +632,19 @@ Panel {
     }
     onExited: function(exitCode) {
       operationTimeout.stop()
+      if (root.recoveryRunning) {
+        root.operationTimedOut = false
+        root.startTimedOutReplaceRecovery()
+        return
+      }
       if (root.operationTimedOut) {
         root.operationTimedOut = false
         root.busy = false
         root.statusText = "Operation stopped after timing out. Try again."
+        root.pendingDeleteName = ""
+        root.pendingReplaceName = ""
+        root.operationKind = ""
+        root.operationName = ""
         root.refreshList()
         return
       }
@@ -625,6 +661,53 @@ Panel {
       } else {
         root.statusText = "Operation failed: " + root.operationSummary(true)
       }
+    }
+  }
+
+  Timer {
+    id: recoveryTimeout
+    interval: 180000
+    repeat: false
+    onTriggered: {
+      if (!recoveryProcess.running) return
+      root.recoveryTimedOut = true
+      recoveryProcess.running = false
+      root.busy = true
+      root.statusText = "Desktop recovery is still stopping…"
+    }
+  }
+
+  Process {
+    id: recoveryProcess
+    stdout: StdioCollector {
+      id: recoveryOutput
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: recoveryError
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      recoveryTimeout.stop()
+      var timedOut = root.recoveryTimedOut
+      root.recoveryTimedOut = false
+      root.recoveryRunning = false
+      root.busy = false
+
+      if (timedOut) {
+        root.statusText = "Desktop recovery timed out; try Restore again."
+      } else if (exitCode === 0) {
+        root.statusText = "Replace timed out; desktop recovery completed."
+      } else {
+        var error = String(recoveryError.text || "").trim().split("\n")[0]
+        root.statusText = "Desktop recovery failed"
+          + (error === "" ? ". Try Restore again." : ": " + error)
+      }
+      root.pendingDeleteName = ""
+      root.pendingReplaceName = ""
+      root.operationKind = ""
+      root.operationName = ""
+      root.refreshList()
     }
   }
 
