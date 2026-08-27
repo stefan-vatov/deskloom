@@ -24,6 +24,7 @@ Panel {
   property var snapshots: []
   property bool bootRestoreAttempted: false
   property bool bootSettingsReady: false
+  property int bootSettingsPolls: 0
   property string bootRestorePreset: ""
 
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
@@ -35,12 +36,21 @@ Panel {
   readonly property color accent: Color.accent
   readonly property color urgent: bar ? bar.urgent : Color.urgent
 
-  onSettingsChanged: bootSettingsReady = true
+  function settingsAreReady() {
+    var values = root.settings
+    return values !== null && typeof values === "object"
+      && ("startOnLogin" in values || "defaultPreset" in values)
+  }
+
+  onSettingsChanged: {
+    if (root.settingsAreReady()) bootSettingsReady = true
+  }
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
   function checkHelper() {
+    if (helperCheck.running) return
     helperCheck.command = ["bash", "-c", "command -v hyprloom >/dev/null 2>&1 && printf ready || printf missing"]
     helperCheck.running = true
   }
@@ -69,8 +79,16 @@ Panel {
   function restoreDefaultAtBoot() {
     if (bootRestoreAttempted) return
     if (!bootSettingsReady) {
-      bootRestoreTimer.restart()
-      return
+      // The bar injects widget settings after the QML component is created.
+      // Give that hand-off a bounded grace period, then use the manifest
+      // defaults even if this install has no custom settings entry yet.
+      if (bootSettingsPolls < 5) {
+        bootSettingsPolls += 1
+        bootRestoreTimer.interval = 1000
+        bootRestoreTimer.restart()
+        return
+      }
+      bootSettingsReady = true
     }
     bootRestoreAttempted = true
 
@@ -83,7 +101,16 @@ Panel {
   }
 
   function launchBootRestore() {
-    bootRestoreProcess.command = ["hyprloom", "restore", root.bootRestorePreset, "--reconcile"]
+    // Bar widgets are instantiated once per monitor.  A user should get one
+    // boot restore, not one restore per monitor, so serialize the short-lived
+    // operation with a user-scoped flock lock.
+    bootRestoreProcess.command = [
+      "bash", "-c",
+      "lock=\"${XDG_RUNTIME_DIR:-/tmp}/deskloom-boot.lock\"; "
+        + "exec 9>\"$lock\"; flock -n 9 || exit 75; "
+        + "exec hyprloom restore \"$1\" --reconcile",
+      "deskloom", root.bootRestorePreset
+    ]
     bootRestoreProcess.running = true
   }
 
@@ -121,6 +148,14 @@ Panel {
     } else if (kind === "restore") {
       operationProcess.command = ["hyprloom", "restore", name, "--reconcile"]
     } else if (kind === "replace") {
+      // Validate the snapshot and every launchable target before closing
+      // anything.  Reconciliation dry-run is strict about missing binaries.
+      operationKind = "replace-preflight"
+      statusText = "Checking snapshot before closing windows…"
+      operationProcess.command = ["hyprloom", "restore", name, "--reconcile", "--dry-run"]
+      operationProcess.running = true
+      return
+    } else if (kind === "replace-now") {
       operationProcess.command = [
         "bash", "-c",
         "set -e; omarchy hyprland window close all; sleep 1; hyprloom restore \"$1\" --reconcile",
@@ -154,15 +189,18 @@ Panel {
     snapshots = next
   }
 
-  function operationSummary() {
+  function operationSummary(preferError) {
     var output = String(operationOutput.text || "").trim()
     var error = String(operationError.text || "").trim()
-    var source = output !== "" ? output : error
+    var source = preferError && error !== "" ? error : (output !== "" ? output : error)
     var firstLine = source.split("\n")[0].trim()
     return firstLine !== "" ? firstLine : "Done"
   }
 
-  Component.onCompleted: checkHelper()
+  Component.onCompleted: {
+    if (root.settingsAreReady()) bootSettingsReady = true
+    checkHelper()
+  }
 
   Timer {
     id: bootRestoreTimer
@@ -231,7 +269,9 @@ Panel {
     id: bootRestoreProcess
     onExited: function(exitCode) {
       root.busy = false
-      if (exitCode === 0) {
+      if (exitCode === 75) {
+        root.statusText = "Default preset restore already running."
+      } else if (exitCode === 0) {
         root.statusText = "Default preset reconciled: '" + root.bootRestorePreset + "'."
         root.refreshList()
       } else {
@@ -261,14 +301,32 @@ Panel {
     }
     onExited: function(exitCode) {
       var kind = root.operationKind
+      if (kind === "replace-preflight") {
+        if (exitCode !== 0) {
+          root.busy = false
+          root.pendingReplaceName = ""
+          root.statusText = "Replace cancelled: snapshot preflight failed."
+          return
+        }
+        root.operationKind = "replace-now"
+        root.statusText = "Closing current windows, then restoring…"
+        operationProcess.command = [
+          "bash", "-c",
+          "set -e; omarchy hyprland window close all; sleep 1; exec hyprloom restore \"$1\" --reconcile",
+          "deskloom", root.pendingReplaceName
+        ]
+        operationProcess.running = true
+        return
+      }
+
       root.busy = false
       if (exitCode === 0) {
-        root.statusText = root.operationSummary()
+        root.statusText = root.operationSummary(false)
         root.pendingDeleteName = ""
         root.pendingReplaceName = ""
         root.refreshList()
       } else {
-        root.statusText = root.operationSummary()
+        root.statusText = "Operation failed: " + root.operationSummary(true)
       }
     }
   }

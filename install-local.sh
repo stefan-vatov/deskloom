@@ -5,13 +5,45 @@ source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 config_root="${XDG_CONFIG_HOME:-$HOME/.config}"
 target_dir="$config_root/omarchy/plugins/thethracian.deskloom"
 
-mkdir -p "$target_dir"
-install -Dm644 "$source_dir/manifest.json" "$target_dir/manifest.json"
-install -Dm644 "$source_dir/Panel.qml" "$target_dir/Panel.qml"
-install -Dm644 "$source_dir/README.md" "$target_dir/README.md"
-rm -f "$target_dir/Service.qml"
+mkdir -p "$(dirname -- "$target_dir")"
 
-omarchy plugin validate "$target_dir"
+# Build and validate a complete replacement first.  This keeps a failed
+# install from leaving the shell with a half-updated plugin, and removes files
+# from older local versions instead of relying on a hand-maintained stale-file
+# list.
+staging_dir=$(mktemp -d "${config_root}/.thethracian.deskloom.XXXXXX")
+backup_dir=""
+cleanup() {
+  if [ -n "${staging_dir:-}" ] && [ -e "$staging_dir" ]; then
+    rm -rf -- "$staging_dir"
+  fi
+  if [ -n "${backup_dir:-}" ] && [ ! -e "$target_dir" ] && [ -e "$backup_dir" ]; then
+    mv -- "$backup_dir" "$target_dir"
+  fi
+}
+trap cleanup EXIT
+
+install -Dm644 "$source_dir/manifest.json" "$staging_dir/manifest.json"
+install -Dm644 "$source_dir/Panel.qml" "$staging_dir/Panel.qml"
+install -Dm644 "$source_dir/README.md" "$staging_dir/README.md"
+omarchy plugin validate "$staging_dir"
+
+if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
+  backup_dir="${target_dir}.old.$$"
+  if [ -e "$backup_dir" ] || [ -L "$backup_dir" ]; then
+    echo "Refusing to replace plugin: backup path already exists: $backup_dir" >&2
+    exit 1
+  fi
+  mv -- "$target_dir" "$backup_dir"
+fi
+mv -- "$staging_dir" "$target_dir"
+staging_dir=""
+if [ -n "$backup_dir" ]; then
+  rm -rf -- "$backup_dir"
+  backup_dir=""
+fi
+trap - EXIT
+
 omarchy-shell shell rescanPlugins >/dev/null
 
 for _ in {1..40}; do

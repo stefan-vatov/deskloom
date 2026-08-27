@@ -7,6 +7,8 @@ It wraps [`hyprloom`](https://github.com/thethracian/hyprloom) and provides:
 - restore without disturbing the current desktop;
 - smart reconciliation that reuses, repairs, and launches only what is missing;
 - a guarded **Replace** action that closes current windows before restoring;
+- a preflight check before **Replace**, so an unreadable snapshot or missing
+  app binary cannot close the current desktop;
 - snapshot listing, refresh, and deletion;
 - settings for starting with Omarchy and choosing a default snapshot;
 - automatic default-snapshot restore a few seconds after Omarchy starts;
@@ -22,7 +24,9 @@ From this checkout:
 ```
 
 The plugin runs as unsandboxed QML inside `omarchy-shell`, like other Omarchy
-shell plugins. Review changes before enabling it.
+shell plugins. The local installer validates a complete staged copy before
+swapping it into the live plugin directory, so removed files do not linger
+after upgrades. Review changes before enabling it.
 
 ## Settings
 
@@ -35,7 +39,8 @@ Open the bar panel and choose **Settings** to:
 When both settings are enabled, Deskloom reconciles the selected preset shortly
 after the Omarchy shell starts. The reconciliation is additive and leaves
 unmatched windows alone; use the snapshot's **Replace** action when you want to
-close the current windows first.
+close the current windows first. On multi-monitor setups, the startup action is
+locked so it runs once for the desktop rather than once per bar instance.
 
 Startup restore lives in the bar widget itself, so enabling Deskloom through the
 normal Omarchy marketplace also enables the default-preset behavior.
