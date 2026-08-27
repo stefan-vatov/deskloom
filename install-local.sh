@@ -4,6 +4,20 @@ set -euo pipefail
 source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 config_root="${XDG_CONFIG_HOME:-$HOME/.config}"
 target_dir="$config_root/omarchy/plugins/thethracian.deskloom"
+umask 077
+
+lock_dir="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/deskloom"
+mkdir -p -- "$lock_dir"
+chmod 700 -- "$lock_dir"
+if ! test -O "$lock_dir"; then
+  echo "Refusing to install Deskloom: lock directory is not user-owned: $lock_dir" >&2
+  exit 1
+fi
+exec 9>"$lock_dir/install.lock"
+if ! flock -n 9; then
+  echo "Another Deskloom installation is already running." >&2
+  exit 1
+fi
 
 mkdir -p "$(dirname -- "$target_dir")"
 
@@ -13,16 +27,19 @@ mkdir -p "$(dirname -- "$target_dir")"
 # list.
 staging_dir=$(mktemp -d "${config_root}/.thethracian.deskloom.XXXXXX")
 backup_dir=""
+target_installed=false
 cleanup() {
   local status=$?
   trap - EXIT
   if [ -n "${staging_dir:-}" ] && [ -e "$staging_dir" ]; then
     rm -rf -- "$staging_dir"
   fi
-  if [ "$status" -ne 0 ] && [ -n "${backup_dir:-}" ] && [ -e "$target_dir" ]; then
+  if [ "$status" -ne 0 ] && [ "$target_installed" = true ] && { [ -e "$target_dir" ] || [ -L "$target_dir" ]; }; then
     rm -rf -- "$target_dir"
   fi
-  if [ "$status" -ne 0 ] && [ -n "${backup_dir:-}" ] && [ ! -e "$target_dir" ] && [ -e "$backup_dir" ]; then
+  if [ "$status" -ne 0 ] && [ -n "${backup_dir:-}" ] \
+    && [ ! -e "$target_dir" ] && [ ! -L "$target_dir" ] \
+    && { [ -e "$backup_dir" ] || [ -L "$backup_dir" ]; }; then
     mv -- "$backup_dir" "$target_dir"
     # Restore the shell's plugin registry when a post-replacement check fails.
     omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
@@ -46,6 +63,7 @@ if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
 fi
 mv -- "$staging_dir" "$target_dir"
 staging_dir=""
+target_installed=true
 
 omarchy-shell shell rescanPlugins >/dev/null
 

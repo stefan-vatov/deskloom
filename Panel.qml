@@ -259,7 +259,10 @@ Panel {
 
   Process {
     id: bootHelperProbe
-    command: ["bash", "-c", "command -v hyprloom >/dev/null 2>&1"]
+    command: [
+      "bash", "-c",
+      "command -v hyprloom >/dev/null 2>&1 && hyprloom --help >/dev/null 2>&1"
+    ]
     onExited: function(exitCode) {
       if (exitCode !== 0) {
         root.busy = false
