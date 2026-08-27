@@ -8,6 +8,7 @@ readonly source_tag="v0.3.0"
 readonly expected_source_commit="5b42a7039dd2196f97ff6b193286b014907c0133"
 readonly local_source="${DESKLOOM_HYPRLOOM_SOURCE:-$HOME/code/hyprloom}"
 readonly destination="$HOME/.local/bin/$package_name"
+readonly destination_marker="$HOME/.local/bin/.$package_name.sha256"
 
 binary_is_ready() {
   local binary="$1"
@@ -16,11 +17,33 @@ binary_is_ready() {
   "$binary" --help >/dev/null 2>&1
 }
 
+destination_is_ready() {
+  local expected actual
+  binary_is_ready "$destination" || return 1
+  [ -f "$destination_marker" ] || return 1
+  [ ! -L "$destination_marker" ] || return 1
+  expected=$(cat -- "$destination_marker")
+  [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || return 1
+  actual=$(sha256sum -- "$destination" | cut -d' ' -f1)
+  [ "$expected" = "$actual" ]
+}
+
+write_destination_marker() {
+  local digest temporary
+  digest=$(sha256sum -- "$destination" | cut -d' ' -f1)
+  temporary=$(mktemp "$destination_marker.XXXXXX")
+  chmod 600 -- "$temporary"
+  printf '%s\n' "$digest" > "$temporary"
+  mv -f -- "$temporary" "$destination_marker"
+}
+
 install_binary() {
   local binary="$1"
   binary_is_ready "$binary" || return 1
   install -Dm0755 -- "$binary" "$destination"
-  binary_is_ready "$destination"
+  binary_is_ready "$destination" || return 1
+  write_destination_marker
+  destination_is_ready
 }
 
 build_from_source() {
@@ -42,18 +65,46 @@ source_is_expected() {
   [ -z "$(git -C "$source" status --porcelain --untracked-files=all 2>/dev/null)" ]
 }
 
-if command -v "$package_name" >/dev/null 2>&1 \
-  && binary_is_ready "$(command -v "$package_name")"; then
+packaged_binary() {
+  command -v pacman >/dev/null 2>&1 || return 1
+  pacman -Q "$package_name" >/dev/null 2>&1 || return 1
+  pacman -Ql "$package_name" 2>/dev/null \
+    | awk -v expected="/$package_name" '$2 ~ expected "$" { print $2; exit }'
+}
+
+packaged_binary_is_trusted() {
+  local binary="$1" ownership
+  binary_is_ready "$binary" || return 1
+  ownership=$(pacman -Qo -- "$binary" 2>/dev/null) || return 1
+  [[ "$ownership" == *" is owned by $package_name $expected_version" ]]
+}
+
+if destination_is_ready; then
   exit 0
+fi
+
+# Promote an exact package-managed helper into the path Deskloom owns.  This
+# avoids accepting a same-version executable that merely happens to appear
+# earlier in PATH.
+if command -v pacman >/dev/null 2>&1; then
+  package_binary=$(packaged_binary || true)
+  if [ -n "$package_binary" ] \
+    && packaged_binary_is_trusted "$package_binary" \
+    && install_binary "$package_binary"; then
+    exit 0
+  fi
 fi
 
 # Let Omarchy's package helper handle the normal Arch/AUR path.  Its terminal
 # is intentionally visible, so pacman can ask for the user's sudo password.
 if command -v omarchy-pkg-aur-add >/dev/null 2>&1 \
-  && omarchy-pkg-aur-add "$package_name" \
-  && command -v "$package_name" >/dev/null 2>&1 \
-  && binary_is_ready "$(command -v "$package_name")"; then
-  exit 0
+  && omarchy-pkg-aur-add "$package_name"; then
+  package_binary=$(packaged_binary || true)
+  if [ -n "$package_binary" ] \
+    && packaged_binary_is_trusted "$package_binary" \
+    && install_binary "$package_binary"; then
+    exit 0
+  fi
 fi
 
 # A local checkout is useful for development installs and for the maintainer's

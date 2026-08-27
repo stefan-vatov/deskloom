@@ -64,13 +64,30 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
+  function helperReadyCheck() {
+    return "test -x \"$HOME/.local/bin/hyprloom\""
+      + " && [ \"$(\"$HOME/.local/bin/hyprloom\" --version 2>/dev/null)\" = \"hyprloom "
+      + root.helperVersion
+      + "\" ]"
+      + " && \"$HOME/.local/bin/hyprloom\" --help >/dev/null 2>&1"
+      + " && test -f \"$HOME/.local/bin/.hyprloom.sha256\""
+      + " && [ \"$(cat -- \"$HOME/.local/bin/.hyprloom.sha256\")\" = \"$(sha256sum -- \"$HOME/.local/bin/hyprloom\" | cut -d' ' -f1)\" ]"
+  }
+
+  function helperProcessCommand(arguments) {
+    var command = [
+      "bash", "-c", "exec \"$HOME/.local/bin/hyprloom\" \"$@\"", "deskloom"
+    ]
+    for (var index = 0; index < arguments.length; index++)
+      command.push(String(arguments[index]))
+    return command
+  }
+
   function checkHelper() {
     if (helperCheck.running) return
     helperCheck.command = [
       "bash", "-c",
-      "command -v hyprloom >/dev/null 2>&1 && [ \"$(hyprloom --version 2>/dev/null)\" = \"hyprloom "
-        + root.helperVersion
-        + "\" ] && hyprloom --help >/dev/null 2>&1 && printf ready || printf missing"
+      root.helperReadyCheck() + " && printf ready || printf missing"
     ]
     helperCheck.running = true
   }
@@ -92,7 +109,7 @@ Panel {
     }
     refreshPending = false
     listTimedOut = false
-    listProcess.command = ["hyprloom", "list"]
+    listProcess.command = root.helperProcessCommand(["list"])
     listProcess.running = true
     listTimeout.restart()
   }
@@ -104,7 +121,7 @@ Panel {
     root.startupRecoveryTimedOut = false
     root.busy = true
     root.statusText = "Checking for interrupted replacement…"
-    startupRecoveryProcess.command = ["hyprloom", "recover"]
+    startupRecoveryProcess.command = root.helperProcessCommand(["recover"])
     startupRecoveryProcess.running = true
     startupRecoveryTimeout.restart()
   }
@@ -225,7 +242,7 @@ Panel {
         + "printf \"%s\\n%s\\n\" \"$claim_key\" in-progress > \"$temporary\"; chmod 600 \"$temporary\"; "
         + "mv -f \"$temporary\" \"$claim_file\"; "
         + "trap 'status=$?; if [ \"$status\" -ne 0 ]; then rm -f -- \"$claim_file\" || true; fi; exit \"$status\"' EXIT; "
-        + "if hyprloom restore \"$1\" --reconcile; then restore_status=0; else restore_status=$?; fi; "
+        + "if \"$HOME/.local/bin/hyprloom\" restore \"$1\" --reconcile; then restore_status=0; else restore_status=$?; fi; "
         + "if [ \"$restore_status\" -eq 0 ]; then completed=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
         + "printf \"%s\\n%s\\n\" \"$claim_key\" complete > \"$completed\"; chmod 600 \"$completed\"; "
         + "mv -f \"$completed\" \"$claim_file\"; fi; exit \"$restore_status\"",
@@ -343,16 +360,16 @@ Panel {
     statusText = "Working…"
 
     if (kind === "save") {
-      operationProcess.command = ["hyprloom", "save", operationArgument, "--force"]
+      operationProcess.command = root.helperProcessCommand(["save", operationArgument, "--force"])
     } else if (kind === "restore") {
-      operationProcess.command = ["hyprloom", "restore", name, "--reconcile"]
+      operationProcess.command = root.helperProcessCommand(["restore", name, "--reconcile"])
     } else if (kind === "replace") {
       // hyprloom loads and validates the target, captures a safety backup,
       // closes windows, and reconciles in one helper process.  This keeps
       // Replace from destroying the current desktop after a stale preflight.
-      operationProcess.command = ["hyprloom", "replace", name]
+      operationProcess.command = root.helperProcessCommand(["replace", name])
     } else if (kind === "delete") {
-      operationProcess.command = ["hyprloom", "delete", name]
+      operationProcess.command = root.helperProcessCommand(["delete", name])
     } else {
       busy = false
       return
@@ -397,7 +414,7 @@ Panel {
 
   function startTimedOutReplaceRecovery() {
     root.recoveryTimedOut = false
-    recoveryProcess.command = ["hyprloom", "recover"]
+    recoveryProcess.command = root.helperProcessCommand(["recover"])
     recoveryProcess.running = true
     recoveryTimeout.restart()
   }
@@ -594,9 +611,7 @@ Panel {
     id: bootHelperProbe
     command: [
       "bash", "-c",
-      "command -v hyprloom >/dev/null 2>&1 && [ \"$(hyprloom --version 2>/dev/null)\" = \"hyprloom "
-        + root.helperVersion
-        + "\" ] && hyprloom --help >/dev/null 2>&1"
+      root.helperReadyCheck()
     ]
     onExited: function(exitCode) {
       if (exitCode !== 0) {
