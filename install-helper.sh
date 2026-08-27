@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 
 readonly package_name="hyprloom"
-readonly expected_version="0.3.0"
+readonly expected_version="0.3.1"
 readonly source_repository="https://github.com/thethracian/hyprloom.git"
-readonly source_tag="v0.3.0"
-readonly expected_source_commit="d3f9397cd81635a721f15878373e030b9aacf8eb"
+readonly source_tag="v0.3.1"
+readonly expected_source_commit="c17962abfdc1725038233149ce707228f7aef074"
 readonly local_source="${DESKLOOM_HYPRLOOM_SOURCE:-$HOME/code/hyprloom}"
 readonly destination="$HOME/.local/bin/$package_name"
 readonly destination_marker="$HOME/.local/bin/.$package_name.sha256"
@@ -23,9 +23,8 @@ destination_is_ready() {
   [ -f "$destination_marker" ] || return 1
   [ ! -L "$destination_marker" ] || return 1
   expected=$(cat -- "$destination_marker")
-  [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || return 1
   actual=$(sha256sum -- "$destination" | cut -d' ' -f1)
-  [ "$expected" = "$actual" ]
+  [ "$expected" = "$expected_source_commit $actual" ]
 }
 
 write_destination_marker() {
@@ -33,7 +32,7 @@ write_destination_marker() {
   digest=$(sha256sum -- "$destination" | cut -d' ' -f1)
   temporary=$(mktemp "$destination_marker.XXXXXX")
   chmod 600 -- "$temporary"
-  printf '%s\n' "$digest" > "$temporary"
+  printf '%s %s\n' "$expected_source_commit" "$digest" > "$temporary"
   mv -f -- "$temporary" "$destination_marker"
 }
 

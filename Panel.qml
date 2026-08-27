@@ -41,7 +41,8 @@ Panel {
   property bool startupRecoveryAttempted: false
   property bool startupRecoveryTimedOut: false
 
-  readonly property string helperVersion: "0.3.0"
+  readonly property string helperVersion: "0.3.1"
+  readonly property string helperSourceCommit: "c17962abfdc1725038233149ce707228f7aef074"
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
   readonly property string defaultPreset: String(setting("defaultPreset", "") || "")
 
@@ -71,7 +72,9 @@ Panel {
       + "\" ]"
       + " && \"$HOME/.local/bin/hyprloom\" --help >/dev/null 2>&1"
       + " && test -f \"$HOME/.local/bin/.hyprloom.sha256\""
-      + " && [ \"$(cat -- \"$HOME/.local/bin/.hyprloom.sha256\")\" = \"$(sha256sum -- \"$HOME/.local/bin/hyprloom\" | cut -d' ' -f1)\" ]"
+      + " && [ \"$(cat -- \"$HOME/.local/bin/.hyprloom.sha256\")\" = \""
+      + root.helperSourceCommit
+      + " $(sha256sum -- \"$HOME/.local/bin/hyprloom\" | cut -d' ' -f1)\" ]"
   }
 
   function helperProcessCommand(arguments) {
