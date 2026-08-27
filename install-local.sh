@@ -6,28 +6,65 @@ config_root="${XDG_CONFIG_HOME:-$HOME/.config}"
 target_dir="$config_root/omarchy/plugins/thethracian.deskloom"
 umask 077
 
+ensure_no_symlink_ancestors() {
+  local normalized component current=""
+  normalized=$(realpath -m -s -- "$1")
+  IFS='/' read -r -a components <<< "${normalized#/}"
+  for component in "${components[@]}"; do
+    [ -z "$component" ] && continue
+    current="$current/$component"
+    if [ -L "$current" ]; then
+      echo "Refusing to use a symlinked path component: $current" >&2
+      return 1
+    fi
+  done
+}
+
+ensure_safe_dir() {
+  local path="$1"
+  local mode mode_value
+  ensure_no_symlink_ancestors "$path"
+  if [ -L "$path" ] || [ ! -d "$path" ]; then
+    echo "Refusing to use a non-directory path: $path" >&2
+    return 1
+  fi
+  if ! test -O "$path"; then
+    echo "Refusing to use a directory not owned by this user: $path" >&2
+    return 1
+  fi
+  mode=$(stat -c '%a' -- "$path")
+  mode_value=$((8#$mode))
+  if (( mode_value & 0022 )); then
+    echo "Refusing to use a directory writable by another user: $path" >&2
+    return 1
+  fi
+}
+
+ensure_no_symlink_ancestors "$config_root"
+mkdir -p -- "$config_root"
+ensure_safe_dir "$config_root"
+mkdir -p -- "$config_root/omarchy/plugins"
+ensure_safe_dir "$config_root/omarchy"
+ensure_safe_dir "$config_root/omarchy/plugins"
+
 lock_dir="${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/deskloom"
+ensure_no_symlink_ancestors "$lock_dir"
 mkdir -p -- "$lock_dir"
 chmod 700 -- "$lock_dir"
-if ! test -O "$lock_dir"; then
-  echo "Refusing to install Deskloom: lock directory is not user-owned: $lock_dir" >&2
-  exit 1
-fi
+ensure_safe_dir "$lock_dir"
 exec 9>"$lock_dir/install.lock"
 if ! flock -n 9; then
   echo "Another Deskloom installation is already running." >&2
   exit 1
 fi
 
-mkdir -p "$(dirname -- "$target_dir")"
 backup_root="$config_root/omarchy/.deskloom-rollback"
 transaction_marker="$backup_root/transaction"
+ensure_no_symlink_ancestors "$backup_root"
 mkdir -p -- "$backup_root"
 chmod 700 -- "$backup_root"
-if ! test -O "$backup_root"; then
-  echo "Refusing to install Deskloom: rollback directory is not user-owned: $backup_root" >&2
-  exit 1
-fi
+ensure_safe_dir "$backup_root"
+ensure_no_symlink_ancestors "$target_dir"
 
 write_transaction_marker() {
   local phase="$1"
@@ -77,6 +114,16 @@ recover_install_transaction() {
   if [ -n "$backup_path" ] && [ -e "$backup_path" ] && [ ! -d "$backup_path" ]; then
     echo "Refusing to recover Deskloom: rollback backup is not a directory." >&2
     return 1
+  fi
+  if [ -n "$backup_path" ] && [ -e "$backup_path" ]; then
+    ensure_safe_dir "$backup_path"
+  fi
+  if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
+    if [ -L "$target_dir" ]; then
+      echo "Refusing to recover Deskloom: installed plugin path is a symlink." >&2
+      return 1
+    fi
+    ensure_safe_dir "$target_dir"
   fi
   case "$phase" in
     prepared|backed-up|installed|committed) ;;
@@ -161,6 +208,7 @@ if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
     echo "Refusing to replace Deskloom: installed plugin path is a symlink: $target_dir" >&2
     exit 1
   fi
+  ensure_safe_dir "$target_dir"
   backup_name="deskloom.old.$$"
   backup_dir="$backup_root/$backup_name"
   if [ -e "$backup_dir" ] || [ -L "$backup_dir" ]; then

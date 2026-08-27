@@ -15,6 +15,7 @@ Panel {
   property bool helperInstalled: false
   property bool busy: false
   property bool installingHelper: false
+  property bool installerTimedOut: false
   property bool settingsOpen: false
   property string statusText: ""
   property string saveName: "work"
@@ -138,16 +139,35 @@ Panel {
 
   function openHelperInstaller() {
     if (busy || helperInstalled) return
+    installerTimedOut = false
     installingHelper = true
     busy = true
     statusText = "Opening the installer terminal…"
+    var installCommand = "bash -c 'set -eu; umask 077; "
+      + "lock_dir=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/deskloom\"; "
+      + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
+      + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; test -O \"$lock_dir\"; "
+      + "exec 9>\"$lock_dir/aur-install.lock\"; flock -n 9 || exit 75; "
+      + "exec omarchy-pkg-aur-add hyprloom'"
     Quickshell.execDetached([
       "omarchy-launch-floating-terminal-with-presentation",
-      "omarchy-pkg-aur-add",
-      "hyprloom"
+      installCommand
     ])
     installPoll.start()
     installTimeout.start()
+  }
+
+  function checkInstallerLock() {
+    if (installerLockProbe.running) return
+    installerLockProbe.command = [
+      "bash", "-c",
+      "set -eu; lock_dir=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/deskloom\"; "
+        + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
+        + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; test -O \"$lock_dir\"; "
+        + "exec 9>\"$lock_dir/aur-install.lock\"; "
+        + "if flock -n 9; then printf free; else printf busy; fi"
+    ]
+    installerLockProbe.running = true
   }
 
   function normalizeName(value) {
@@ -237,7 +257,29 @@ Panel {
     id: installPoll
     interval: 1000
     repeat: true
-    onTriggered: root.checkHelper()
+    onTriggered: {
+      root.checkHelper()
+      if (root.installingHelper && root.installerTimedOut)
+        root.checkInstallerLock()
+    }
+  }
+
+  Process {
+    id: installerLockProbe
+    stdout: StdioCollector {
+      id: installerLockOutput
+      waitForEnd: true
+    }
+    onExited: function() {
+      if (!root.installingHelper || !root.installerTimedOut) return
+      if (String(installerLockOutput.text || "").trim() === "free") {
+        root.installingHelper = false
+        root.busy = false
+        root.statusText = "Installer stopped before hyprloom was ready. Try again."
+        installPoll.stop()
+        installTimeout.stop()
+      }
+    }
   }
 
   Timer {
@@ -246,10 +288,13 @@ Panel {
     repeat: false
     onTriggered: {
       if (!root.installingHelper) return
-      root.installingHelper = false
-      root.busy = false
-      root.statusText = "Installation failed or timed out. Try again."
-      installPoll.stop()
+      // The AUR terminal is deliberately detached, so the panel cannot kill
+      // or await it directly.  Keep the UI serialized until its user-scoped
+      // lock is free; a second click must never start a concurrent pacman job.
+      root.installerTimedOut = true
+      root.busy = true
+      root.statusText = "Installation is still running…"
+      root.checkInstallerLock()
     }
   }
 
@@ -261,8 +306,8 @@ Panel {
       if (!bootRestoreProcess.running) return
       root.bootRestoreTimedOut = true
       bootRestoreProcess.running = false
-      root.busy = false
-      root.statusText = "Default preset restore timed out. Try again later."
+      root.busy = true
+      root.statusText = "Default preset restore is still stopping…"
     }
   }
 
@@ -295,8 +340,8 @@ Panel {
       if (!operationProcess.running) return
       root.operationTimedOut = true
       operationProcess.running = false
-      root.busy = false
-      root.statusText = "Operation timed out. Try again."
+      root.busy = true
+      root.statusText = "Operation is still stopping…"
     }
   }
 
@@ -311,6 +356,7 @@ Panel {
       if (root.helperInstalled) {
         if (root.installingHelper) {
           root.installingHelper = false
+          root.installerTimedOut = false
           root.busy = false
           root.statusText = "hyprloom is ready."
           installPoll.stop()
@@ -352,6 +398,8 @@ Panel {
       bootRestoreTimeout.stop()
       if (root.bootRestoreTimedOut) {
         root.bootRestoreTimedOut = false
+        root.busy = false
+        root.statusText = "Default preset restore stopped after timing out."
         return
       }
       root.busy = false
@@ -390,10 +438,15 @@ Panel {
       listTimeout.stop()
       if (root.listTimedOut) {
         root.listTimedOut = false
+        if (root.refreshPending && root.helperInstalled)
+          Qt.callLater(function() { root.refreshList() })
+        else
+          root.refreshPending = false
         return
       }
       if (!root.helperInstalled) {
         root.snapshots = []
+        root.refreshPending = false
         return
       }
       if (exitCode === 0) {
@@ -422,6 +475,9 @@ Panel {
       operationTimeout.stop()
       if (root.operationTimedOut) {
         root.operationTimedOut = false
+        root.busy = false
+        root.statusText = "Operation stopped after timing out. Try again."
+        root.refreshList()
         return
       }
       root.busy = false
