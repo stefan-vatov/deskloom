@@ -22,6 +22,9 @@ Panel {
   property string pendingReplaceName: ""
   property string operationKind: ""
   property var snapshots: []
+  property bool bootRestoreAttempted: false
+  property bool bootSettingsReady: false
+  property string bootRestorePreset: ""
 
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
   readonly property string defaultPreset: String(setting("defaultPreset", "") || "")
@@ -31,6 +34,8 @@ Panel {
   readonly property color surface: Color.popups.background
   readonly property color accent: Color.accent
   readonly property color urgent: bar ? bar.urgent : Color.urgent
+
+  onSettingsChanged: bootSettingsReady = true
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -61,6 +66,27 @@ Panel {
     statusText = name ? "Default preset set to '" + name + "'." : "Default preset cleared."
   }
 
+  function restoreDefaultAtBoot() {
+    if (bootRestoreAttempted) return
+    if (!bootSettingsReady) {
+      bootRestoreTimer.restart()
+      return
+    }
+    bootRestoreAttempted = true
+
+    if (!root.startOnLogin || root.defaultPreset === "") return
+
+    bootRestorePreset = root.defaultPreset
+    busy = true
+    statusText = "Restoring default preset…"
+    bootHelperProbe.running = true
+  }
+
+  function launchBootRestore() {
+    bootRestoreProcess.command = ["hyprloom", "restore", root.bootRestorePreset, "--reconcile"]
+    bootRestoreProcess.running = true
+  }
+
   function openHelperInstaller() {
     if (busy || helperInstalled) return
     installingHelper = true
@@ -72,6 +98,7 @@ Panel {
       "hyprloom"
     ])
     installPoll.start()
+    installTimeout.start()
   }
 
   function normalizeName(value) {
@@ -138,10 +165,31 @@ Panel {
   Component.onCompleted: checkHelper()
 
   Timer {
+    id: bootRestoreTimer
+    interval: 4000
+    repeat: false
+    running: true
+    onTriggered: root.restoreDefaultAtBoot()
+  }
+
+  Timer {
     id: installPoll
     interval: 1000
     repeat: true
     onTriggered: root.checkHelper()
+  }
+
+  Timer {
+    id: installTimeout
+    interval: 180000
+    repeat: false
+    onTriggered: {
+      if (!root.installingHelper) return
+      root.installingHelper = false
+      root.busy = false
+      root.statusText = "Installation failed or timed out. Try again."
+      installPoll.stop()
+    }
   }
 
   Process {
@@ -158,8 +206,36 @@ Panel {
           root.busy = false
           root.statusText = "hyprloom is ready."
           installPoll.stop()
+          installTimeout.stop()
         }
         root.refreshList()
+      }
+    }
+  }
+
+  Process {
+    id: bootHelperProbe
+    command: ["bash", "-c", "command -v hyprloom >/dev/null 2>&1"]
+    onExited: function(exitCode) {
+      if (exitCode !== 0) {
+        root.busy = false
+        root.statusText = "Default preset skipped: hyprloom is not installed."
+        return
+      }
+      root.helperInstalled = true
+      root.launchBootRestore()
+    }
+  }
+
+  Process {
+    id: bootRestoreProcess
+    onExited: function(exitCode) {
+      root.busy = false
+      if (exitCode === 0) {
+        root.statusText = "Default preset reconciled: '" + root.bootRestorePreset + "'."
+        root.refreshList()
+      } else {
+        root.statusText = "Default preset restore failed for '" + root.bootRestorePreset + "'."
       }
     }
   }

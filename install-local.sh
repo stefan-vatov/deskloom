@@ -8,8 +8,8 @@ target_dir="$config_root/omarchy/plugins/thethracian.deskloom"
 mkdir -p "$target_dir"
 install -Dm644 "$source_dir/manifest.json" "$target_dir/manifest.json"
 install -Dm644 "$source_dir/Panel.qml" "$target_dir/Panel.qml"
-install -Dm644 "$source_dir/Service.qml" "$target_dir/Service.qml"
 install -Dm644 "$source_dir/README.md" "$target_dir/README.md"
+rm -f "$target_dir/Service.qml"
 
 omarchy plugin validate "$target_dir"
 omarchy-shell shell rescanPlugins >/dev/null

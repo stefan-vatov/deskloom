@@ -37,6 +37,9 @@ after the Omarchy shell starts. The reconciliation is additive and leaves
 unmatched windows alone; use the snapshot's **Replace** action when you want to
 close the current windows first.
 
+Startup restore lives in the bar widget itself, so enabling Deskloom through the
+normal Omarchy marketplace also enables the default-preset behavior.
+
 ## Dependency behavior
 
 Omarchy's plugin clone/install command intentionally does not execute plugin
