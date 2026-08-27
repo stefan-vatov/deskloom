@@ -7,7 +7,8 @@ It wraps [`hyprloom`](https://github.com/thethracian/hyprloom) and provides:
 - restore without disturbing the current desktop;
 - smart reconciliation that reuses, repairs, and launches only what is missing;
 - a guarded **Replace** action that validates the target, saves a safety
-  autosnapshot, closes current windows, and restores in one helper operation;
+  autosnapshot, closes current windows, restores in one helper operation, and
+  attempts safety recovery if the replacement fails;
 - snapshot listing, refresh, and deletion;
 - settings for starting with Omarchy and choosing a default snapshot;
 - automatic default-snapshot restore a few seconds after Omarchy starts;
@@ -42,6 +43,10 @@ close the current windows first. Replace stores a safety autosnapshot before
 closing anything, so a failed restore leaves a recoverable copy. On
 multi-monitor setups, the startup action is locked so it runs once for the
 desktop rather than once per bar instance.
+
+Replace intentionally closes every Hyprland client currently open, including
+windows excluded by the capture filters. Use Open when extra or ignored
+windows should remain untouched.
 
 Startup restore lives in the bar widget itself, so enabling Deskloom through the
 normal Omarchy marketplace also enables the default-preset behavior.

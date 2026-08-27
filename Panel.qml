@@ -52,7 +52,10 @@ Panel {
 
   function checkHelper() {
     if (helperCheck.running) return
-    helperCheck.command = ["bash", "-c", "command -v hyprloom >/dev/null 2>&1 && printf ready || printf missing"]
+    helperCheck.command = [
+      "bash", "-c",
+      "command -v hyprloom >/dev/null 2>&1 && hyprloom --help >/dev/null 2>&1 && printf ready || printf missing"
+    ]
     helperCheck.running = true
   }
 
@@ -270,6 +273,10 @@ Panel {
 
   Process {
     id: bootRestoreProcess
+    stderr: StdioCollector {
+      id: bootRestoreError
+      waitForEnd: true
+    }
     onExited: function(exitCode) {
       root.busy = false
       if (exitCode === 75) {
@@ -278,7 +285,9 @@ Panel {
         root.statusText = "Default preset reconciled: '" + root.bootRestorePreset + "'."
         root.refreshList()
       } else {
-        root.statusText = "Default preset restore failed for '" + root.bootRestorePreset + "'."
+        var error = String(bootRestoreError.text || "").trim().split("\n")[0]
+        root.statusText = "Default preset restore failed"
+          + (error === "" ? "." : ": " + error)
       }
     }
   }
@@ -289,8 +298,18 @@ Panel {
       id: listOutput
       waitForEnd: true
     }
+    stderr: StdioCollector {
+      id: listError
+      waitForEnd: true
+    }
     onExited: function(exitCode) {
-      if (exitCode === 0) root.parseList(listOutput.text)
+      if (exitCode === 0) {
+        root.parseList(listOutput.text)
+      } else {
+        var error = String(listError.text || "").trim().split("\n")[0]
+        root.statusText = "Could not refresh snapshots"
+          + (error === "" ? "." : ": " + error)
+      }
     }
   }
 
