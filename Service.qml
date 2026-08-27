@@ -43,13 +43,13 @@ Item {
 
   Process {
     id: helperProbe
-    command: ["bash", "-c", "command -v hyprflow >/dev/null 2>&1"]
+    command: ["bash", "-c", "command -v hyprloom >/dev/null 2>&1"]
     onExited: function(exitCode) {
       if (exitCode !== 0) {
-        console.warn("Deskloom: default preset skipped because hyprflow is not installed")
+        console.warn("Deskloom: default preset skipped because hyprloom is not installed")
         return
       }
-      restoreProcess.command = ["hyprflow", "restore", root.pendingPreset]
+      restoreProcess.command = ["hyprloom", "restore", root.pendingPreset, "--reconcile"]
       restoreProcess.running = true
     }
   }
@@ -58,7 +58,7 @@ Item {
     id: restoreProcess
     onExited: function(exitCode) {
       if (exitCode === 0)
-        console.log("Deskloom: restored default preset '" + root.pendingPreset + "'")
+        console.log("Deskloom: reconciled default preset '" + root.pendingPreset + "'")
       else
         console.warn("Deskloom: default preset restore failed for '" + root.pendingPreset + "'")
     }

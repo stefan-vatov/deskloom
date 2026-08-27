@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "thethracian.deskloom",
   "name": "Deskloom",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "Thethracian",
   "license": "MIT",
   "description": "Named Hyprland workspace snapshots with a small Omarchy bar panel.",
@@ -17,11 +17,11 @@
   },
   "barWidget": {
     "displayName": "Deskloom",
-    "description": "Save, restore, replace, and delete named workspace snapshots.",
+    "description": "Save, reconcile, replace, and delete named workspace snapshots.",
     "category": "Productivity",
     "aliases": [
       "workspace snapshots",
-      "hyprflow",
+      "hyprloom",
       "sessions"
     ],
     "allowMultiple": false,

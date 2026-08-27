@@ -36,13 +36,13 @@ Panel {
   implicitHeight: button.implicitHeight
 
   function checkHelper() {
-    helperCheck.command = ["bash", "-c", "command -v hyprflow >/dev/null 2>&1 && printf ready || printf missing"]
+    helperCheck.command = ["bash", "-c", "command -v hyprloom >/dev/null 2>&1 && printf ready || printf missing"]
     helperCheck.running = true
   }
 
   function refreshList() {
     if (!helperInstalled || listProcess.running) return
-    listProcess.command = ["hyprflow", "list"]
+    listProcess.command = ["hyprloom", "list"]
     listProcess.running = true
   }
 
@@ -69,7 +69,7 @@ Panel {
     Quickshell.execDetached([
       "omarchy-launch-floating-terminal-with-presentation",
       "omarchy-pkg-aur-add",
-      "hyprflow"
+      "hyprloom"
     ])
     installPoll.start()
   }
@@ -90,17 +90,17 @@ Panel {
     statusText = "Working…"
 
     if (kind === "save") {
-      operationProcess.command = ["hyprflow", "save", normalizeName(name), "--force"]
+      operationProcess.command = ["hyprloom", "save", normalizeName(name), "--force"]
     } else if (kind === "restore") {
-      operationProcess.command = ["hyprflow", "restore", name]
+      operationProcess.command = ["hyprloom", "restore", name, "--reconcile"]
     } else if (kind === "replace") {
       operationProcess.command = [
         "bash", "-c",
-        "set -e; omarchy hyprland window close all; sleep 1; hyprflow restore \"$1\"",
+        "set -e; omarchy hyprland window close all; sleep 1; hyprloom restore \"$1\" --reconcile",
         "deskloom", name
       ]
     } else if (kind === "delete") {
-      operationProcess.command = ["hyprflow", "delete", name]
+      operationProcess.command = ["hyprloom", "delete", name]
     } else {
       busy = false
       return
@@ -156,7 +156,7 @@ Panel {
         if (root.installingHelper) {
           root.installingHelper = false
           root.busy = false
-          root.statusText = "hyprflow is ready."
+          root.statusText = "hyprloom is ready."
           installPoll.stop()
         }
         root.refreshList()
@@ -240,7 +240,7 @@ Panel {
           Text {
             text: root.helperInstalled
               ? "Named workspace snapshots"
-              : "Needs the hyprflow helper"
+              : "Needs the hyprloom helper"
             color: root.dim
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -300,7 +300,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: "Deskloom uses hyprflow to capture window positions, workspaces, monitors, and app launch commands."
+          text: "Deskloom uses hyprloom to capture window positions, workspaces, monitors, and app launch commands."
           wrapMode: Text.WordWrap
           color: root.dim
           font.family: root.bar.fontFamily
@@ -309,7 +309,7 @@ Panel {
 
         Button {
           width: parent.width
-          text: root.busy ? "Installing…" : "Install hyprflow from AUR"
+          text: root.busy ? "Installing…" : "Install hyprloom from AUR"
           foreground: root.foreground
           fontFamily: root.bar.fontFamily
           bordered: true
@@ -565,7 +565,7 @@ Panel {
           width: parent.width
           text: root.helperInstalled
             ? (root.snapshots.length === 0 ? "Save a snapshot first." : "Choose which snapshot should open at login.")
-            : "Install hyprflow first to choose a preset."
+            : "Install hyprloom first to choose a preset."
           color: root.dim
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.bodySmall
