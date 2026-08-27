@@ -21,6 +21,7 @@ Panel {
   property string pendingDeleteName: ""
   property string pendingReplaceName: ""
   property string operationKind: ""
+  property string operationName: ""
   property var snapshots: []
   property bool bootRestoreAttempted: false
   property bool bootSettingsReady: false
@@ -106,8 +107,11 @@ Panel {
     // operation with a user-scoped flock lock.
     bootRestoreProcess.command = [
       "bash", "-c",
-      "lock=\"${XDG_RUNTIME_DIR:-/tmp}/deskloom-boot.lock\"; "
-        + "exec 9>\"$lock\"; flock -n 9 || exit 75; "
+      "set -eu; umask 077; "
+        + "lock_dir=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/deskloom\"; "
+        + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; "
+        + "test -O \"$lock_dir\"; exec 9>\"$lock_dir/boot.lock\"; "
+        + "flock -n 9 || exit 75; "
         + "exec hyprloom restore \"$1\" --reconcile",
       "deskloom", root.bootRestorePreset
     ]
@@ -140,6 +144,7 @@ Panel {
     if (!helperInstalled) return
 
     operationKind = kind
+    operationName = String(name || "")
     busy = true
     statusText = "Working…"
 
@@ -148,19 +153,10 @@ Panel {
     } else if (kind === "restore") {
       operationProcess.command = ["hyprloom", "restore", name, "--reconcile"]
     } else if (kind === "replace") {
-      // Validate the snapshot and every launchable target before closing
-      // anything.  Reconciliation dry-run is strict about missing binaries.
-      operationKind = "replace-preflight"
-      statusText = "Checking snapshot before closing windows…"
-      operationProcess.command = ["hyprloom", "restore", name, "--reconcile", "--dry-run"]
-      operationProcess.running = true
-      return
-    } else if (kind === "replace-now") {
-      operationProcess.command = [
-        "bash", "-c",
-        "set -e; omarchy hyprland window close all; sleep 1; hyprloom restore \"$1\" --reconcile",
-        "deskloom", name
-      ]
+      // hyprloom loads and validates the target, captures a safety backup,
+      // closes windows, and reconciles in one helper process.  This keeps
+      // Replace from destroying the current desktop after a stale preflight.
+      operationProcess.command = ["hyprloom", "replace", name]
     } else if (kind === "delete") {
       operationProcess.command = ["hyprloom", "delete", name]
     } else {
@@ -173,7 +169,8 @@ Panel {
 
   function parseList(output) {
     var next = []
-    var lines = String(output || "").split("\n")
+    var text = String(output || "")
+    var lines = text.split("\n")
     var rowPattern = /^\s*(.*?)\s+—\s+(\d+)\s+windows?\s+\(([^)]+)\)(.*)$/
     for (var i = 0; i < lines.length; i++) {
       var line = lines[i]
@@ -187,6 +184,12 @@ Panel {
       })
     }
     snapshots = next
+    var complete = text.indexOf("Saved sessions:") !== -1 || text.indexOf("No saved sessions.") !== -1
+    if (complete && root.defaultPreset !== ""
+        && !next.some(function(snapshot) { return snapshot.name === root.defaultPreset })) {
+      root.persistSettings({ defaultPreset: "" })
+      if (!root.busy) root.statusText = "Default preset cleared because its snapshot no longer exists."
+    }
   }
 
   function operationSummary(preferError) {
@@ -286,7 +289,9 @@ Panel {
       id: listOutput
       waitForEnd: true
     }
-    onExited: root.parseList(listOutput.text)
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.parseList(listOutput.text)
+    }
   }
 
   Process {
@@ -300,30 +305,15 @@ Panel {
       waitForEnd: true
     }
     onExited: function(exitCode) {
-      var kind = root.operationKind
-      if (kind === "replace-preflight") {
-        if (exitCode !== 0) {
-          root.busy = false
-          root.pendingReplaceName = ""
-          root.statusText = "Replace cancelled: snapshot preflight failed."
-          return
-        }
-        root.operationKind = "replace-now"
-        root.statusText = "Closing current windows, then restoring…"
-        operationProcess.command = [
-          "bash", "-c",
-          "set -e; omarchy hyprland window close all; sleep 1; exec hyprloom restore \"$1\" --reconcile",
-          "deskloom", root.pendingReplaceName
-        ]
-        operationProcess.running = true
-        return
-      }
-
       root.busy = false
       if (exitCode === 0) {
+        if (root.operationKind === "delete" && root.defaultPreset === root.operationName)
+          root.persistSettings({ defaultPreset: "" })
         root.statusText = root.operationSummary(false)
         root.pendingDeleteName = ""
         root.pendingReplaceName = ""
+        root.operationKind = ""
+        root.operationName = ""
         root.refreshList()
       } else {
         root.statusText = "Operation failed: " + root.operationSummary(true)

@@ -14,12 +14,20 @@ mkdir -p "$(dirname -- "$target_dir")"
 staging_dir=$(mktemp -d "${config_root}/.thethracian.deskloom.XXXXXX")
 backup_dir=""
 cleanup() {
+  local status=$?
+  trap - EXIT
   if [ -n "${staging_dir:-}" ] && [ -e "$staging_dir" ]; then
     rm -rf -- "$staging_dir"
   fi
-  if [ -n "${backup_dir:-}" ] && [ ! -e "$target_dir" ] && [ -e "$backup_dir" ]; then
-    mv -- "$backup_dir" "$target_dir"
+  if [ "$status" -ne 0 ] && [ -n "${backup_dir:-}" ] && [ -e "$target_dir" ]; then
+    rm -rf -- "$target_dir"
   fi
+  if [ "$status" -ne 0 ] && [ -n "${backup_dir:-}" ] && [ ! -e "$target_dir" ] && [ -e "$backup_dir" ]; then
+    mv -- "$backup_dir" "$target_dir"
+    # Restore the shell's plugin registry when a post-replacement check fails.
+    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+  fi
+  return "$status"
 }
 trap cleanup EXIT
 
@@ -38,23 +46,34 @@ if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
 fi
 mv -- "$staging_dir" "$target_dir"
 staging_dir=""
+
+omarchy-shell shell rescanPlugins >/dev/null
+
+registered=false
+for _ in {1..40}; do
+  if omarchy plugin list --json | jq -e 'any(.[]; .id == "thethracian.deskloom")' >/dev/null; then
+    registered=true
+    break
+  fi
+  sleep 0.05
+done
+if [ "$registered" != true ]; then
+  echo "Plugin was not registered after shell rescan; the previous install will be restored." >&2
+  exit 1
+fi
+
+if ! omarchy plugin list --json | jq -e 'any(.[]; .id == "thethracian.deskloom" and .enabled == true)' >/dev/null; then
+  omarchy plugin enable thethracian.deskloom --after omarchy.tray
+fi
+if ! omarchy plugin list --json | jq -e 'any(.[]; .id == "thethracian.deskloom" and .enabled == true)' >/dev/null; then
+  echo "Plugin was registered but could not be enabled; the previous install will be restored." >&2
+  exit 1
+fi
+
 if [ -n "$backup_dir" ]; then
   rm -rf -- "$backup_dir"
   backup_dir=""
 fi
 trap - EXIT
-
-omarchy-shell shell rescanPlugins >/dev/null
-
-for _ in {1..40}; do
-  if omarchy plugin list --json | jq -e 'any(.[]; .id == "thethracian.deskloom")' >/dev/null; then
-    break
-  fi
-  sleep 0.05
-done
-
-if ! omarchy plugin list --json | jq -e 'any(.[]; .id == "thethracian.deskloom" and .enabled == true)' >/dev/null; then
-  omarchy plugin enable thethracian.deskloom --after omarchy.tray
-fi
 
 echo "Deskloom installed from $source_dir"
