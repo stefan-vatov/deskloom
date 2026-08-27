@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "thethracian.deskloom",
+  "name": "Deskloom",
+  "version": "0.2.0",
+  "author": "Thethracian",
+  "license": "MIT",
+  "description": "Named Hyprland workspace snapshots with a small Omarchy bar panel.",
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "Panel.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "Deskloom",
+    "description": "Save, restore, replace, and delete named workspace snapshots.",
+    "category": "Productivity",
+    "aliases": [
+      "workspace snapshots",
+      "hyprflow",
+      "sessions"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "startOnLogin": false,
+      "defaultPreset": ""
+    },
+    "schema": [
+      {
+        "key": "startOnLogin",
+        "type": "boolean",
+        "label": "Start on login",
+        "defaultValue": false,
+        "description": "Restore the selected default preset after Omarchy starts."
+      },
+      {
+        "key": "defaultPreset",
+        "type": "string",
+        "label": "Default preset",
+        "defaultValue": "",
+        "description": "The named snapshot to restore when Start on login is enabled."
+      }
+    ]
+  }
+}
