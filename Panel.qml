@@ -41,8 +41,8 @@ Panel {
   property bool startupRecoveryAttempted: false
   property bool startupRecoveryTimedOut: false
 
-  readonly property string helperVersion: "0.3.7"
-  readonly property string helperSourceCommit: "2fb3c574afcf64453473c9805c5b72c79b7de047"
+  readonly property string helperVersion: "0.3.8"
+  readonly property string helperSourceCommit: "bf50dd109f6dfaca0de3c0fcc745a03aaa9676c8"
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
   readonly property string defaultPreset: String(setting("defaultPreset", "") || "")
 
