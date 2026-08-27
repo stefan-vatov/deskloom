@@ -41,6 +41,7 @@ Panel {
   property bool startupRecoveryAttempted: false
   property bool startupRecoveryTimedOut: false
 
+  readonly property string helperVersion: "0.3.0"
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
   readonly property string defaultPreset: String(setting("defaultPreset", "") || "")
 
@@ -67,7 +68,9 @@ Panel {
     if (helperCheck.running) return
     helperCheck.command = [
       "bash", "-c",
-      "command -v hyprloom >/dev/null 2>&1 && hyprloom --help >/dev/null 2>&1 && printf ready || printf missing"
+      "command -v hyprloom >/dev/null 2>&1 && [ \"$(hyprloom --version 2>/dev/null)\" = \"hyprloom "
+        + root.helperVersion
+        + "\" ] && hyprloom --help >/dev/null 2>&1 && printf ready || printf missing"
     ]
     helperCheck.running = true
   }
@@ -591,7 +594,9 @@ Panel {
     id: bootHelperProbe
     command: [
       "bash", "-c",
-      "command -v hyprloom >/dev/null 2>&1 && hyprloom --help >/dev/null 2>&1"
+      "command -v hyprloom >/dev/null 2>&1 && [ \"$(hyprloom --version 2>/dev/null)\" = \"hyprloom "
+        + root.helperVersion
+        + "\" ] && hyprloom --help >/dev/null 2>&1"
     ]
     onExited: function(exitCode) {
       if (exitCode !== 0) {
