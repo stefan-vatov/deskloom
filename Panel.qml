@@ -18,6 +18,7 @@ Panel {
   property bool installerTimedOut: false
   property bool installerFinished: false
   property string installerAttemptId: ""
+  property int installerPolls: 0
   property bool settingsOpen: false
   property string statusText: ""
   property string saveName: "work"
@@ -86,8 +87,33 @@ Panel {
     for (var existing in current) if (existing !== "id") entry[existing] = current[existing]
     for (var key in values) entry[key] = values[key]
     root.settings = entry
-    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
-      root.bar.shell.updateEntryInline(root.moduleName, entry)
+    var shell = root.bar && root.bar.shell ? root.bar.shell : null
+    if (shell && typeof shell.mutateShellConfig === "function") {
+      shell.mutateShellConfig(function(config) {
+        var sections = ["left", "center", "right"]
+        var found = false
+        function merge(item) {
+          if (!item || String(item.id || "") !== root.moduleName) return false
+          for (var setting in values) if (setting !== "id") item[setting] = values[setting]
+          return true
+        }
+        var layout = config.bar && config.bar.layout ? config.bar.layout : null
+        if (layout) {
+          for (var section = 0; section < sections.length; section++) {
+            var entries = layout[sections[section]]
+            if (!Array.isArray(entries)) continue
+            for (var index = 0; index < entries.length; index++)
+              if (merge(entries[index])) found = true
+          }
+        }
+        if (!found && Array.isArray(config.plugins)) {
+          for (var plugin = 0; plugin < config.plugins.length; plugin++)
+            if (merge(config.plugins[plugin])) found = true
+        }
+      })
+    } else if (shell && typeof shell.updateEntryInline === "function") {
+      shell.updateEntryInline(root.moduleName, entry)
+    }
   }
 
   function setDefaultPreset(name) {
@@ -127,22 +153,30 @@ Panel {
     bootRestoreProcess.command = [
       "bash", "-c",
       "set -eu; umask 077; "
-        + "lock_dir=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/deskloom\"; "
+        + "lock_root=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}\"; "
+        + "if [ -L \"$lock_root\" ] || [ -e \"$lock_root\" ] && [ ! -d \"$lock_root\" ]; then exit 1; fi; "
+        + "lock_dir=\"$lock_root/deskloom\"; "
+        + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
         + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; "
-        + "test -O \"$lock_dir\"; exec 9>\"$lock_dir/boot.lock\"; "
+        + "test -O \"$lock_dir\"; lock_file=\"$lock_dir/boot.lock\"; "
+        + "if [ -L \"$lock_file\" ] || [ -e \"$lock_file\" ] && [ ! -f \"$lock_file\" ]; then exit 1; fi; "
+        + "exec 9>\"$lock_file\"; "
         + "flock -n 9 || exit 75; "
         + "claim_file=\"$lock_dir/boot-claim\"; "
         + "if [ -L \"$claim_file\" ] || [ -e \"$claim_file\" ] && [ ! -f \"$claim_file\" ]; then exit 1; fi; "
-        + "claim_key=\"${XDG_SESSION_ID:-}\"; "
-        + "if [ -z \"$claim_key\" ] && [ -r /proc/sys/kernel/random/boot_id ]; then "
-        + "claim_key=$(cat /proc/sys/kernel/random/boot_id); fi; "
-        + "claim_key=\"${claim_key:-${WAYLAND_DISPLAY:-deskloom}}\"; "
+        + "session_id=\"${XDG_SESSION_ID:-}\"; "
+        + "boot_id=\"\"; "
+        + "if [ -r /proc/sys/kernel/random/boot_id ]; then IFS= read -r boot_id < /proc/sys/kernel/random/boot_id || true; fi; "
+        + "instance_id=\"${HYPRLAND_INSTANCE_SIGNATURE:-${WAYLAND_DISPLAY:-deskloom}}\"; "
+        + "if [ -n \"$boot_id\" ]; then claim_key=\"$boot_id:${session_id:-$instance_id}\"; "
+        + "else claim_key=\"${session_id:-$instance_id}\"; fi; "
         + "if [ -f \"$claim_file\" ]; then previous=\"\"; IFS= read -r previous < \"$claim_file\" || true; "
         + "if [ \"$previous\" = \"$claim_key\" ]; then exit 76; fi; fi; "
         + "temporary=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
         + "printf \"%s\\n\" \"$claim_key\" > \"$temporary\"; chmod 600 \"$temporary\"; "
         + "mv -f \"$temporary\" \"$claim_file\"; "
-        + "exec hyprloom restore \"$1\" --reconcile",
+        + "trap 'status=$?; if [ \"$status\" -ne 0 ]; then rm -f -- \"$claim_file\" || true; fi; exit \"$status\"' EXIT; "
+        + "hyprloom restore \"$1\" --reconcile",
       "deskloom", root.bootRestorePreset
     ]
     bootRestoreTimedOut = false
@@ -155,14 +189,19 @@ Panel {
     installerTimedOut = false
     installerFinished = false
     installerAttemptId = String(Date.now())
+    installerPolls = 0
     installingHelper = true
     busy = true
     statusText = "Opening the installer terminal…"
     var installCommand = "bash -c 'set -eu; umask 077; "
-      + "lock_dir=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/deskloom\"; "
+      + "lock_root=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}\"; "
+      + "if [ -L \"$lock_root\" ] || [ -e \"$lock_root\" ] && [ ! -d \"$lock_root\" ]; then exit 1; fi; "
+      + "lock_dir=\"$lock_root/deskloom\"; "
       + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
       + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; test -O \"$lock_dir\"; "
-      + "exec 9>\"$lock_dir/aur-install.lock\"; flock -n 9 || exit 75; "
+      + "lock_file=\"$lock_dir/aur-install.lock\"; "
+      + "if [ -L \"$lock_file\" ] || [ -e \"$lock_file\" ] && [ ! -f \"$lock_file\" ]; then exit 1; fi; "
+      + "exec 9>\"$lock_file\"; flock -n 9 || exit 75; "
       + "result_file=\"$lock_dir/aur-install-result-$1\"; "
       + "if [ -L \"$result_file\" ] || [ -e \"$result_file\" ] && [ ! -f \"$result_file\" ]; then exit 1; fi; "
       + "rm -f \"$result_file\"; "
@@ -184,7 +223,9 @@ Panel {
     if (!root.installingHelper || installerResultProbe.running) return
     installerResultProbe.command = [
       "bash", "-c",
-      "set -eu; lock_dir=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/deskloom\"; "
+      "set -eu; lock_root=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}\"; "
+        + "if [ -L \"$lock_root\" ] || [ -e \"$lock_root\" ] && [ ! -d \"$lock_root\" ]; then exit 1; fi; "
+        + "lock_dir=\"$lock_root/deskloom\"; "
         + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
         + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; test -O \"$lock_dir\"; "
         + "result_file=\"$lock_dir/aur-install-result-$1\"; "
@@ -199,10 +240,14 @@ Panel {
     if (installerLockProbe.running) return
     installerLockProbe.command = [
       "bash", "-c",
-      "set -eu; lock_dir=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}/deskloom\"; "
+      "set -eu; lock_root=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}\"; "
+        + "if [ -L \"$lock_root\" ] || [ -e \"$lock_root\" ] && [ ! -d \"$lock_root\" ]; then exit 1; fi; "
+        + "lock_dir=\"$lock_root/deskloom\"; "
         + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
         + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; test -O \"$lock_dir\"; "
-        + "exec 9>\"$lock_dir/aur-install.lock\"; "
+        + "lock_file=\"$lock_dir/aur-install.lock\"; "
+        + "if [ -L \"$lock_file\" ] || [ -e \"$lock_file\" ] && [ ! -f \"$lock_file\" ]; then exit 1; fi; "
+        + "exec 9>\"$lock_file\"; "
         + "if flock -n 9; then printf free; else printf busy; fi"
     ]
     installerLockProbe.running = true
@@ -298,8 +343,9 @@ Panel {
     onTriggered: {
       root.checkHelper()
       if (root.installingHelper) {
+        root.installerPolls += 1
         root.checkInstallerResult()
-        if (root.installerTimedOut) root.checkInstallerLock()
+        if (root.installerPolls >= 5) root.checkInstallerLock()
       }
     }
   }
@@ -336,7 +382,7 @@ Panel {
       waitForEnd: true
     }
     onExited: function() {
-      if (!root.installingHelper || !root.installerTimedOut) return
+      if (!root.installingHelper || root.installerPolls < 5) return
       if (String(installerLockOutput.text || "").trim() === "free") {
         root.installingHelper = false
         root.busy = false
