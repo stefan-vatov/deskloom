@@ -2,10 +2,11 @@
 set -Eeuo pipefail
 
 readonly package_name="hyprloom"
-readonly expected_version="0.3.4"
+readonly expected_version="0.3.5"
 readonly source_repository="https://github.com/thethracian/hyprloom.git"
-readonly source_tag="v0.3.4"
-readonly expected_source_commit="e9ce4bd58e10aa9c07e8ca89975a2c71e3f6ae7a"
+readonly source_tag="v0.3.5"
+readonly expected_source_commit="c261295f74d64d1b914288144086e00bfea93155"
+readonly expected_source_digest="d2980deb10d3950680d7589d5e37287b7f6dfbe0623046eadf1254d331633eea"
 readonly local_source="${DESKLOOM_HYPRLOOM_SOURCE:-$HOME/code/hyprloom}"
 readonly destination="$HOME/.local/bin/$package_name"
 readonly destination_marker="$HOME/.local/bin/.$package_name.sha256"
@@ -71,11 +72,23 @@ packaged_binary() {
     | awk -v expected="/$package_name" '$2 ~ expected "$" { print $2; exit }'
 }
 
+packaged_source_digest() {
+  command -v pacman >/dev/null 2>&1 || return 1
+  pacman -Ql "$package_name" 2>/dev/null \
+    | awk -v expected="/usr/share/$package_name/source-digest" '$2 == expected { print $2; exit }'
+}
+
 packaged_binary_is_trusted() {
-  local binary="$1" ownership installed_version
+  local binary="$1" ownership installed_version provenance
   binary_is_ready "$binary" || return 1
   installed_version=$(pacman -Q "$package_name" 2>/dev/null | awk -v package="$package_name" '$1 == package { print $2; exit }')
   [[ "$installed_version" == "$expected_version"-* ]] || return 1
+  provenance=$(packaged_source_digest || true)
+  [ -n "$provenance" ] || return 1
+  [ -f "$provenance" ] || return 1
+  [ ! -L "$provenance" ] || return 1
+  [ "$(cat -- "$provenance" 2>/dev/null)" = "$expected_source_digest" ] || return 1
+  pacman -Qkk "$package_name" >/dev/null 2>&1 || return 1
   ownership=$(pacman -Qo -- "$binary" 2>/dev/null) || return 1
   [[ "$ownership" == *" is owned by $package_name $installed_version" ]]
 }
