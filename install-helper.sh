@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 
 readonly package_name="hyprloom"
-readonly expected_version="0.3.2"
+readonly expected_version="0.3.3"
 readonly source_repository="https://github.com/thethracian/hyprloom.git"
-readonly source_tag="v0.3.2"
-readonly expected_source_commit="fff5138e518722d939c82268afb3f674816b8b1b"
+readonly source_tag="v0.3.3"
+readonly expected_source_commit="586b4b922dac69e72717fb35e87be7f33ce530f3"
 readonly local_source="${DESKLOOM_HYPRLOOM_SOURCE:-$HOME/code/hyprloom}"
 readonly destination="$HOME/.local/bin/$package_name"
 readonly destination_marker="$HOME/.local/bin/.$package_name.sha256"
