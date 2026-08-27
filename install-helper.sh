@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 
 readonly package_name="hyprloom"
-readonly expected_version="0.3.1"
+readonly expected_version="0.3.2"
 readonly source_repository="https://github.com/thethracian/hyprloom.git"
-readonly source_tag="v0.3.1"
-readonly expected_source_commit="c17962abfdc1725038233149ce707228f7aef074"
+readonly source_tag="v0.3.2"
+readonly expected_source_commit="fff5138e518722d939c82268afb3f674816b8b1b"
 readonly local_source="${DESKLOOM_HYPRLOOM_SOURCE:-$HOME/code/hyprloom}"
 readonly destination="$HOME/.local/bin/$package_name"
 readonly destination_marker="$HOME/.local/bin/.$package_name.sha256"
@@ -72,10 +72,12 @@ packaged_binary() {
 }
 
 packaged_binary_is_trusted() {
-  local binary="$1" ownership
+  local binary="$1" ownership installed_version
   binary_is_ready "$binary" || return 1
+  installed_version=$(pacman -Q "$package_name" 2>/dev/null | awk -v package="$package_name" '$1 == package { print $2; exit }')
+  [[ "$installed_version" == "$expected_version"-* ]] || return 1
   ownership=$(pacman -Qo -- "$binary" 2>/dev/null) || return 1
-  [[ "$ownership" == *" is owned by $package_name $expected_version" ]]
+  [[ "$ownership" == *" is owned by $package_name $installed_version" ]]
 }
 
 if destination_is_ready; then
