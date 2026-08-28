@@ -59,7 +59,19 @@ ensure_no_symlink_ancestors "$lock_dir"
 mkdir -p -- "$lock_dir"
 chmod 700 -- "$lock_dir"
 ensure_safe_dir "$lock_dir"
-exec 9>"$lock_dir/install.lock"
+lock_path="$lock_dir/install.lock"
+if [ -L "$lock_path" ] || { [ -e "$lock_path" ] && [ ! -f "$lock_path" ]; }; then
+  echo "Refusing to use a non-regular install lock: $lock_path" >&2
+  exit 1
+fi
+if [ -f "$lock_path" ] && ! test -O "$lock_path"; then
+  echo "Refusing to use an install lock not owned by this user: $lock_path" >&2
+  exit 1
+fi
+# Open without truncating an existing lock file.  The lock directory is private
+# and the target is checked above, so a sentinel or prior lock contents survive
+# a failed/repeated installation.
+exec 9<>"$lock_path"
 if ! flock -n 9; then
   echo "Another Deskloom installation is already running." >&2
   exit 1

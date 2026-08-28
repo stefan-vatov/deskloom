@@ -2,11 +2,10 @@
 set -Eeuo pipefail
 
 readonly package_name="hyprloom"
-readonly expected_version="0.3.8"
+readonly expected_version="0.3.9"
 readonly source_repository="https://github.com/thethracian/hyprloom.git"
-readonly source_tag="v0.3.8"
-readonly expected_source_commit="bf50dd109f6dfaca0de3c0fcc745a03aaa9676c8"
-readonly expected_source_digest="96b4f66dbe5ce271ab16724c7f70f7c06ecafc3ac58b8f87df92f3041dc9d4e9"
+readonly source_tag="v0.3.9"
+readonly expected_source_commit="add5a43836cef0924aa2a66cf8488e8cf61d7a9d"
 readonly local_source="${DESKLOOM_HYPRLOOM_SOURCE:-$HOME/code/hyprloom}"
 readonly destination="$HOME/.local/bin/$package_name"
 readonly destination_marker="$HOME/.local/bin/.$package_name.sha256"
@@ -52,6 +51,10 @@ build_from_source() {
   command -v cargo >/dev/null 2>&1 || return 1
   (
     cd -- "$source"
+    # Never reuse a release artifact from an earlier checkout or build.  The
+    # source commit is pinned above, but the binary must also be produced by
+    # this invocation before it is copied into Deskloom's owned path.
+    cargo clean --release
     cargo build --locked --release
   )
   install_binary "$source/target/release/$package_name"
@@ -65,60 +68,17 @@ source_is_expected() {
   [ -z "$(git -C "$source" status --porcelain --untracked-files=all 2>/dev/null)" ]
 }
 
-packaged_binary() {
-  command -v pacman >/dev/null 2>&1 || return 1
-  LC_ALL=C pacman -Q "$package_name" >/dev/null 2>&1 || return 1
-  LC_ALL=C pacman -Ql "$package_name" 2>/dev/null \
-    | awk -v expected="/$package_name" '$2 ~ expected "$" { print $2; exit }'
-}
-
-packaged_source_digest() {
-  command -v pacman >/dev/null 2>&1 || return 1
-  LC_ALL=C pacman -Ql "$package_name" 2>/dev/null \
-    | awk -v expected="/usr/share/$package_name/source-digest" '$2 == expected { print $2; exit }'
-}
-
-packaged_binary_is_trusted() {
-  local binary="$1" ownership installed_version provenance
-  binary_is_ready "$binary" || return 1
-  installed_version=$(LC_ALL=C pacman -Q "$package_name" 2>/dev/null | awk -v package="$package_name" '$1 == package { print $2; exit }')
-  [[ "$installed_version" == "$expected_version"-* ]] || return 1
-  provenance=$(packaged_source_digest || true)
-  [ -n "$provenance" ] || return 1
-  [ -f "$provenance" ] || return 1
-  [ ! -L "$provenance" ] || return 1
-  [ "$(cat -- "$provenance" 2>/dev/null)" = "$expected_source_digest" ] || return 1
-  LC_ALL=C pacman -Qkk "$package_name" >/dev/null 2>&1 || return 1
-  ownership=$(LC_ALL=C pacman -Qo -- "$binary" 2>/dev/null) || return 1
-  [[ "$ownership" == *" is owned by $package_name $installed_version" ]]
-}
-
 if destination_is_ready; then
   exit 0
 fi
 
-# Promote an exact package-managed helper into the path Deskloom owns.  This
-# avoids accepting a same-version executable that merely happens to appear
-# earlier in PATH.
-if command -v pacman >/dev/null 2>&1; then
-  package_binary=$(packaged_binary || true)
-  if [ -n "$package_binary" ] \
-    && packaged_binary_is_trusted "$package_binary" \
-    && install_binary "$package_binary"; then
-    exit 0
-  fi
-fi
-
-# Let Omarchy's package helper handle the normal Arch/AUR path.  Its terminal
-# is intentionally visible, so pacman can ask for the user's sudo password.
-if command -v omarchy-pkg-aur-add >/dev/null 2>&1 \
-  && omarchy-pkg-aur-add "$package_name"; then
-  package_binary=$(packaged_binary || true)
-  if [ -n "$package_binary" ] \
-    && packaged_binary_is_trusted "$package_binary" \
-    && install_binary "$package_binary"; then
-    exit 0
-  fi
+# Let Omarchy's package helper install the normal Arch/AUR package and its
+# dependencies.  We still build the pinned source below: an AUR package is
+# user-contributed code and its self-reported source-digest must not be treated
+# as an independent proof of the binary's provenance.  Its terminal is
+# intentionally visible, so pacman can ask for the user's sudo password.
+if command -v omarchy-pkg-aur-add >/dev/null 2>&1; then
+  omarchy-pkg-aur-add "$package_name" || true
 fi
 
 # A local checkout is useful for development installs and for the maintainer's

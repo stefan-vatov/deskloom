@@ -41,8 +41,8 @@ Panel {
   property bool startupRecoveryAttempted: false
   property bool startupRecoveryTimedOut: false
 
-  readonly property string helperVersion: "0.3.8"
-  readonly property string helperSourceCommit: "bf50dd109f6dfaca0de3c0fcc745a03aaa9676c8"
+  readonly property string helperVersion: "0.3.9"
+  readonly property string helperSourceCommit: "add5a43836cef0924aa2a66cf8488e8cf61d7a9d"
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
   readonly property string defaultPreset: String(setting("defaultPreset", "") || "")
 
@@ -140,7 +140,12 @@ Panel {
       shell.mutateShellConfig(function(config) {
         var sections = ["left", "center", "right"]
         var found = false
-        function merge(item) {
+        function merge(item, entries, index) {
+          if (typeof item === "string") {
+            if (item !== root.moduleName) return false
+            entries[index] = entry
+            return true
+          }
           if (!item || String(item.id || "") !== root.moduleName) return false
           for (var setting in values) if (setting !== "id") item[setting] = values[setting]
           return true
@@ -151,12 +156,12 @@ Panel {
             var entries = layout[sections[section]]
             if (!Array.isArray(entries)) continue
             for (var index = 0; index < entries.length; index++)
-              if (merge(entries[index])) found = true
+              if (merge(entries[index], entries, index)) found = true
           }
         }
         if (!found && Array.isArray(config.plugins)) {
           for (var plugin = 0; plugin < config.plugins.length; plugin++)
-            if (merge(config.plugins[plugin])) found = true
+            if (merge(config.plugins[plugin], config.plugins, plugin)) found = true
         }
       })
     } else if (shell && typeof shell.updateEntryInline === "function") {
