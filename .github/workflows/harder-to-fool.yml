@@ -1,0 +1,13 @@
+name: Harder to Fool
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check protocol synchronization
+        run: python .ai/harder-to-fool/check_sync.py .ai/harder-to-fool/CODE.md AGENTS.md
