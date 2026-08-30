@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "thethracian.deskloom",
   "name": "Deskloom",
-  "version": "0.3.9",
+  "version": "0.4.0-dev.4",
   "author": "Thethracian",
   "license": "MIT",
   "description": "Named Hyprland workspace snapshots with a small Omarchy bar panel.",

@@ -270,8 +270,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-install -Dm644 "$source_dir/manifest.json" "$staging_dir/manifest.json"
-install -Dm644 "$source_dir/Panel.qml" "$staging_dir/Panel.qml"
+runtime_files=(Panel.qml RestoreReport.js RestoreReportView.qml RestoreReportPopup.qml)
+# A long-running QML engine may cache components by URL even after a registry
+# rescan. Give changed code and all its local imports a fresh, immutable URL.
+runtime_revision=$(cd -- "$source_dir" && sha256sum -- "${runtime_files[@]}" | sha256sum | cut -d' ' -f1)
+runtime_entry="runtime/$runtime_revision/Panel.qml"
+for runtime_file in "${runtime_files[@]}"; do
+  install -Dm644 "$source_dir/$runtime_file" "$staging_dir/runtime/$runtime_revision/$runtime_file"
+done
+jq --arg entry "$runtime_entry" '.entryPoints.barWidget = $entry' "$source_dir/manifest.json" > "$staging_dir/manifest.json"
 install -Dm644 "$source_dir/README.md" "$staging_dir/README.md"
 install -Dm0755 "$source_dir/install-helper.sh" "$staging_dir/install-helper.sh"
 omarchy plugin validate "$staging_dir"

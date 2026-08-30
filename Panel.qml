@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "RestoreReport.js" as RestoreReport
 
 Panel {
   id: root
@@ -27,6 +28,8 @@ Panel {
   property string operationKind: ""
   property string operationName: ""
   property var snapshots: []
+  property bool snapshotsLoaded: false
+  property bool snapshotListFailed: false
   property bool bootRestoreAttempted: false
   property bool bootSettingsReady: false
   property int bootSettingsPolls: 0
@@ -41,8 +44,11 @@ Panel {
   property bool startupRecoveryAttempted: false
   property bool startupRecoveryTimedOut: false
 
-  readonly property string helperVersion: "0.3.9"
-  readonly property string helperSourceCommit: "add5a43836cef0924aa2a66cf8488e8cf61d7a9d"
+  readonly property string pluginVersion: "0.4.0-dev.4"
+  readonly property string helperVersion: "0.4.0-dev.2"
+  readonly property string helperSourceCommit: "8b23252905b84698d40933286d52fc242fc164b8"
+  readonly property string reportScreenName: root.QsWindow.window && root.QsWindow.window.screen
+    ? String(root.QsWindow.window.screen.name) : ""
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
   readonly property string defaultPreset: String(setting("defaultPreset", "") || "")
 
@@ -51,6 +57,44 @@ Panel {
   readonly property color surface: Color.popups.background
   readonly property color accent: Color.accent
   readonly property color urgent: bar ? bar.urgent : Color.urgent
+
+  function reportingStatus() {
+    var report = restoreReportPopup.report
+    return JSON.stringify({
+      version: root.pluginVersion,
+      helperVersion: root.helperVersion,
+      sourceCommit: root.helperSourceCommit,
+      componentUrl: String(Qt.resolvedUrl("Panel.qml")),
+      monitor: root.reportScreenName,
+      helperInstalled: root.helperInstalled,
+      busy: root.busy,
+      snapshotCount: root.snapshots.length,
+      snapshotsLoaded: root.snapshotsLoaded,
+      snapshotListFailed: root.snapshotListFailed,
+      hasReport: report !== null,
+      reportOpen: restoreReportPopup.open,
+      reportAvailable: report !== null && report.available,
+      counts: report !== null ? report.counts : null
+    })
+  }
+
+  IpcHandler {
+    enabled: root.reportScreenName !== ""
+    target: "thethracian.deskloom." + encodeURIComponent(root.reportScreenName)
+    function status(): string { return root.reportingStatus() }
+  }
+
+  function presentRestoreReport(output, error, exitCode, name, timedOut) {
+    var model = RestoreReport.parse(
+      timedOut ? "" : output,
+      timedOut ? 1 : exitCode,
+      timedOut ? (error || "Restore timed out; completed window outcomes are unavailable.") : error,
+      name
+    )
+    root.statusText = model.summaryText
+    root.close()
+    restoreReportPopup.present(model)
+  }
 
   function settingsAreReady() {
     var values = root.settings
@@ -77,12 +121,12 @@ Panel {
       + " $(sha256sum -- \"$HOME/.local/bin/hyprloom\" | cut -d' ' -f1)\" ]"
   }
 
-  function helperProcessCommand(arguments) {
+  function helperProcessCommand(args) {
     var command = [
       "bash", "-c", "exec \"$HOME/.local/bin/hyprloom\" \"$@\"", "deskloom"
     ]
-    for (var index = 0; index < arguments.length; index++)
-      command.push(String(arguments[index]))
+    for (var index = 0; index < args.length; index++)
+      command.push(String(args[index]))
     return command
   }
 
@@ -115,6 +159,13 @@ Panel {
     listProcess.command = root.helperProcessCommand(["list"])
     listProcess.running = true
     listTimeout.restart()
+  }
+
+  function snapshotActionsReady() {
+    return root.helperInstalled
+      && !root.busy
+      && !listProcess.running
+      && !startupRecoveryProcess.running
   }
 
   function startStartupRecovery() {
@@ -256,7 +307,7 @@ Panel {
         + "if [ \"$status\" -ne 0 ]; then rm -f -- \"$claim_file\" || true; fi; "
         + "trap - EXIT TERM INT; exit \"$status\"; }; "
         + "trap cleanup EXIT TERM INT; "
-        + "\"$HOME/.local/bin/hyprloom\" restore \"$1\" --reconcile & child_pid=$!; "
+        + "\"$HOME/.local/bin/hyprloom\" restore \"$1\" --reconcile --report-json & child_pid=$!; "
         + "if wait \"$child_pid\"; then restore_status=0; else restore_status=$?; fi; "
         + "child_pid=\"\"; "
         + "if [ \"$restore_status\" -eq 0 ]; then completed=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
@@ -378,12 +429,14 @@ Panel {
     if (kind === "save") {
       operationProcess.command = root.helperProcessCommand(["save", operationArgument, "--force"])
     } else if (kind === "restore") {
-      operationProcess.command = root.helperProcessCommand(["restore", name, "--reconcile"])
+      restoreReportPopup.dismiss()
+      operationProcess.command = root.helperProcessCommand(["restore", name, "--reconcile", "--report-json"])
     } else if (kind === "replace") {
       // hyprloom loads and validates the target, captures a safety backup,
       // closes windows, and reconciles in one helper process.  This keeps
       // Replace from destroying the current desktop after a stale preflight.
-      operationProcess.command = root.helperProcessCommand(["replace", name])
+      restoreReportPopup.dismiss()
+      operationProcess.command = root.helperProcessCommand(["replace", name, "--report-json"])
     } else if (kind === "delete") {
       operationProcess.command = root.helperProcessCommand(["delete", name])
     } else {
@@ -412,6 +465,8 @@ Panel {
       })
     }
     snapshots = next
+    root.snapshotsLoaded = true
+    root.snapshotListFailed = false
     var complete = text.indexOf("Saved sessions:") !== -1 || text.indexOf("No saved sessions.") !== -1
     if (complete && root.defaultPreset !== ""
         && !next.some(function(snapshot) { return snapshot.name === root.defaultPreset })) {
@@ -424,8 +479,51 @@ Panel {
     var output = String(operationOutput.text || "").trim()
     var error = String(operationError.text || "").trim()
     var source = preferError && error !== "" ? error : (output !== "" ? output : error)
+    if (preferError && source !== "") return source
     var firstLine = source.split("\n")[0].trim()
     return firstLine !== "" ? firstLine : "Done"
+  }
+
+  function emptySnapshotMessage() {
+    if (root.snapshots.length !== 0) return ""
+    if (root.snapshotListFailed) return "Could not load snapshots. Try Refresh snapshots."
+    if (!root.snapshotsLoaded) return "Loading snapshots…"
+    return "No snapshots yet. Save the workspace you are in now."
+  }
+
+  function removeSnapshot(name) {
+    var target = String(name || "")
+    var remaining = []
+    for (var index = 0; index < root.snapshots.length; index++) {
+      if (root.snapshots[index].name !== target) remaining.push(root.snapshots[index])
+    }
+    root.snapshots = remaining
+  }
+
+  function requestDelete(name) {
+    var target = String(name || "")
+    if (target === "") return
+
+    if (root.pendingDeleteName !== target) {
+      if (!root.snapshotActionsReady()) return
+      root.pendingDeleteName = target
+      root.pendingReplaceName = ""
+      root.statusText = "Click Confirm to delete '" + target + "'."
+      return
+    }
+
+    if (!root.snapshotActionsReady()) {
+      root.statusText = "Still refreshing snapshots; click Confirm again when ready."
+      return
+    }
+
+    // Defer the process start until the delegate has finished applying the
+    // confirmation-state binding.  This keeps the second click reliable even
+    // when the popup has to resize to show the status message.
+    Qt.callLater(function() {
+      if (root.pendingDeleteName === target && root.snapshotActionsReady())
+        root.runOperation("delete", target)
+    })
   }
 
   function startTimedOutReplaceRecovery() {
@@ -552,6 +650,7 @@ Panel {
       root.listTimedOut = true
       listProcess.running = false
       root.statusText = "Refreshing snapshots timed out."
+      root.snapshotListFailed = true
     }
   }
 
@@ -691,6 +790,7 @@ Panel {
         root.bootRestoreTimedOut = false
         root.busy = false
         root.statusText = "Default preset restore stopped after timing out."
+        root.presentRestoreReport("", root.statusText, 1, root.bootRestorePreset, true)
         return
       }
       root.busy = false
@@ -702,23 +802,22 @@ Panel {
           bootRestoreRetryTimer.interval = 1000 * root.bootRestoreRetries
           bootRestoreRetryTimer.restart()
         } else {
-          root.statusText = "Default preset restore is already running."
+          root.statusText = "Automatic restore skipped: startup lock was busy."
         }
       } else if (exitCode === 76) {
         root.statusText = "Default preset already restored this session."
       } else if (exitCode === 0) {
-        root.statusText = "Default preset reconciled: '" + root.bootRestorePreset + "'."
+        root.presentRestoreReport(bootRestoreOutput.text, bootRestoreError.text, exitCode, root.bootRestorePreset, false)
         root.refreshList()
       } else {
         var output = String(bootRestoreOutput.text || "")
-        var onlySafeSkips = output.indexOf("SKIP:") >= 0
-          && output.indexOf("FAIL:") < 0
+        var model = RestoreReport.parse(output, exitCode, bootRestoreError.text, root.bootRestorePreset)
+        var onlySafeSkips = model.available && model.counts.skipped > 0 && model.counts.failed === 0
         if (onlySafeSkips) {
-          root.statusText = "Default preset partially applied; some windows were skipped safely."
+          root.presentRestoreReport(output, bootRestoreError.text, exitCode, root.bootRestorePreset, false)
           root.refreshList()
           return
         }
-        var error = String(bootRestoreError.text || "").trim().split("\n")[0]
         if (root.bootRestoreRetries < 3) {
           root.bootRestoreRetries += 1
           root.busy = true
@@ -726,8 +825,7 @@ Panel {
           bootRestoreRetryTimer.interval = 1000 * root.bootRestoreRetries
           bootRestoreRetryTimer.restart()
         } else {
-          root.statusText = "Default preset restore failed"
-            + (error === "" ? "." : ": " + error)
+          root.presentRestoreReport(output, bootRestoreError.text, exitCode, root.bootRestorePreset, false)
         }
       }
     }
@@ -761,7 +859,8 @@ Panel {
       if (exitCode === 0) {
         root.parseList(listOutput.text)
       } else {
-        var error = String(listError.text || "").trim().split("\n")[0]
+        root.snapshotListFailed = true
+        var error = String(listError.text || "").trim()
         root.statusText = "Could not refresh snapshots"
           + (error === "" ? "." : ": " + error)
       }
@@ -772,6 +871,7 @@ Panel {
 
   Process {
     id: operationProcess
+    objectName: "operationProcess"
     stdout: StdioCollector {
       id: operationOutput
       waitForEnd: true
@@ -781,6 +881,8 @@ Panel {
       waitForEnd: true
     }
     onExited: function(exitCode) {
+      var completedKind = root.operationKind
+      var completedName = root.operationName
       operationTimeout.stop()
       if (root.recoveryRunning) {
         root.operationTimedOut = false
@@ -791,6 +893,8 @@ Panel {
         root.operationTimedOut = false
         root.busy = false
         root.statusText = "Operation stopped after timing out. Try again."
+        if (completedKind === "restore")
+          root.presentRestoreReport("", root.statusText, 1, completedName, true)
         root.pendingDeleteName = ""
         root.pendingReplaceName = ""
         root.operationKind = ""
@@ -799,17 +903,24 @@ Panel {
         return
       }
       root.busy = false
+      var isRestore = completedKind === "restore" || completedKind === "replace"
+      if (isRestore)
+        root.presentRestoreReport(operationOutput.text, operationError.text, exitCode, completedName, false)
       if (exitCode === 0) {
-        if (root.operationKind === "delete" && root.defaultPreset === root.operationName)
-          root.persistSettings({ defaultPreset: "" })
-        root.statusText = root.operationSummary(false)
+        if (completedKind === "delete") {
+          root.removeSnapshot(completedName)
+          if (root.defaultPreset === completedName)
+            root.persistSettings({ defaultPreset: "" })
+        }
+        if (!isRestore) root.statusText = root.operationSummary(false)
         root.pendingDeleteName = ""
         root.pendingReplaceName = ""
         root.operationKind = ""
         root.operationName = ""
         root.refreshList()
       } else {
-        root.statusText = "Operation failed: " + root.operationSummary(true)
+        if (completedKind === "delete") root.pendingDeleteName = ""
+        if (!isRestore) root.statusText = "Operation failed: " + root.operationSummary(true)
       }
     }
   }
@@ -855,6 +966,7 @@ Panel {
       }
       root.pendingDeleteName = ""
       root.pendingReplaceName = ""
+      root.presentRestoreReport("", root.statusText, 1, root.operationName, true)
       root.operationKind = ""
       root.operationName = ""
       root.refreshList()
@@ -869,6 +981,13 @@ Panel {
     active: root.opened
     tooltipText: "Deskloom workspace snapshots"
     onPressed: root.toggle()
+  }
+
+  RestoreReportPopup {
+    id: restoreReportPopup
+    objectName: "restoreReportPopup"
+    anchorItem: root
+    bar: root.bar
   }
 
   PopupCard {
@@ -947,14 +1066,50 @@ Panel {
         }
       }
 
-      Text {
+      Flickable {
+        id: statusScroller
+        objectName: "statusScroller"
         width: parent.width
-        text: root.statusText
-        color: root.statusText.indexOf("failed") >= 0 ? root.urgent : root.dim
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
-        visible: text !== ""
+        height: Math.min(contentHeight, Style.space(120))
+        contentWidth: width
+        contentHeight: statusMessage.contentHeight
+        visible: root.statusText !== ""
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        flickableDirection: Flickable.VerticalFlick
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
+        TextEdit {
+          id: statusMessage
+          objectName: "statusMessage"
+          width: Math.max(0, statusScroller.width - Style.space(12))
+          height: contentHeight
+          text: root.statusText
+          textFormat: TextEdit.PlainText
+          wrapMode: TextEdit.Wrap
+          readOnly: true
+          selectByMouse: true
+          selectionColor: root.accent
+          color: root.statusText.indexOf("failed") >= 0 ? root.urgent : root.dim
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+          onTextChanged: statusScroller.contentY = 0
+        }
+      }
+
+      Button {
+        text: "Last restore"
+        objectName: "lastRestoreButton"
+        visible: restoreReportPopup.report !== null
+        foreground: root.foreground
+        fontFamily: root.bar.fontFamily
+        fontSize: Style.font.caption
+        bordered: true
+        tooltipText: "Show the last restore's per-window results"
+        onClicked: {
+          root.close()
+          restoreReportPopup.reopen()
+        }
       }
 
       Column {
@@ -1047,7 +1202,7 @@ Panel {
 
       Text {
         width: parent.width
-        text: root.snapshots.length === 0 ? "No snapshots yet. Save the workspace you are in now." : ""
+        text: root.emptySnapshotMessage()
         color: root.dim
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -1121,7 +1276,7 @@ Panel {
                 fontSize: Style.font.caption
                 horizontalPadding: Style.space(6)
                 verticalPadding: Style.space(5)
-                enabled: !root.busy
+                enabled: root.snapshotActionsReady()
                 tooltipText: "Restore without closing current windows"
                 onClicked: root.runOperation("restore", modelData.name)
               }
@@ -1133,7 +1288,7 @@ Panel {
                 fontSize: Style.font.caption
                 horizontalPadding: Style.space(6)
                 verticalPadding: Style.space(5)
-                enabled: !root.busy
+                enabled: root.snapshotActionsReady()
                 tooltipText: "Close current windows, then restore this snapshot"
                 onClicked: {
                   if (root.pendingReplaceName === modelData.name)
@@ -1147,23 +1302,15 @@ Panel {
               }
 
               Button {
-                text: root.pendingDeleteName === modelData.name ? "Sure?" : "Delete"
+                text: root.pendingDeleteName === modelData.name ? "Confirm" : "Delete"
                 foreground: root.pendingDeleteName === modelData.name ? root.urgent : root.dim
                 fontFamily: root.bar.fontFamily
                 fontSize: Style.font.caption
                 horizontalPadding: Style.space(6)
                 verticalPadding: Style.space(5)
-                enabled: !root.busy
+                enabled: root.snapshotActionsReady()
                 tooltipText: "Delete this saved snapshot"
-                onClicked: {
-                  if (root.pendingDeleteName === modelData.name)
-                    root.runOperation("delete", modelData.name)
-                  else {
-                    root.pendingDeleteName = modelData.name
-                    root.pendingReplaceName = ""
-                    root.statusText = "Click Delete again to remove this snapshot."
-                  }
-                }
+                onClicked: root.requestDelete(modelData.name)
               }
             }
           }
@@ -1295,6 +1442,7 @@ Panel {
 
   onOpenedChanged: {
     if (opened) {
+      restoreReportPopup.dismiss()
       root.checkHelper()
       Qt.callLater(function() {
         if (root.opened && root.helperInstalled) root.refreshList()
