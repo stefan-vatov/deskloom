@@ -10,7 +10,17 @@ status: normative
   a failed first install must not leave a partial live plugin.
 - Deskloom accepts a helper only when the binary reports the expected release
   and its installed digest is tied to the pinned helper source revision. A
-  source fallback must build from a clean checkout at that pinned revision.
+  build uses Cargo with the lockfile and an exact revision of the maintained
+  Hyprloom repository, never AUR or an unpinned package of the same name. An
+  explicit local source override must be a clean checkout at that revision,
+  checked before and after building. Builds use isolated temporary target and
+  install directories; failed builds or validation preserve the prior helper.
+- Cloning/enabling a plugin does not authorize installing its helper. The
+  user explicitly starts the visible build terminal or runs the helper script.
+  Missing build tools produce actionable errors; Deskloom must not install
+  packages or invoke privilege elevation automatically. Concurrent helper
+  installers are serialized, and staged complete files are published only
+  after validation. Readiness fails closed during binary/marker publication.
 - Changed runtime code must acquire a fresh component identity on local
   installation, including its local imports, so a long-running shell cannot
   silently reuse an earlier cached implementation. Registry reload logs alone

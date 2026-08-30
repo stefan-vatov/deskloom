@@ -13,6 +13,9 @@ function run(name, fakeHelper = true) {
     ...(fakeHelper ? [
       '--ro-bind', env.FIXTURE_HELPER, path.join(process.env.HOME, '.local/bin/hyprloom'),
       '--ro-bind', path.join(stage, 'helper.sha256'), path.join(process.env.HOME, '.local/bin/.hyprloom.sha256')
+    ] : process.env.DESKLOOM_TEST_HELPER_ROOT ? [
+      '--ro-bind', path.join(process.env.DESKLOOM_TEST_HELPER_ROOT, 'bin/hyprloom'), path.join(process.env.HOME, '.local/bin/hyprloom'),
+      '--ro-bind', path.join(process.env.DESKLOOM_TEST_HELPER_ROOT, 'bin/.hyprloom.sha256'), path.join(process.env.HOME, '.local/bin/.hyprloom.sha256')
     ] : []),
     '/usr/bin/quickshell', '--path', path.join(stage, 'shell.qml')],
     { env, encoding: 'utf8', timeout: 15000 });

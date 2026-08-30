@@ -44,9 +44,9 @@ Panel {
   property bool startupRecoveryAttempted: false
   property bool startupRecoveryTimedOut: false
 
-  readonly property string pluginVersion: "0.4.0-dev.4"
+  readonly property string pluginVersion: "0.4.0-dev.5"
   readonly property string helperVersion: "0.4.0-dev.2"
-  readonly property string helperSourceCommit: "8b23252905b84698d40933286d52fc242fc164b8"
+  readonly property string helperSourceCommit: "884dd246f060d0a9e94058b60070b00ccc8eb95c"
   readonly property string reportScreenName: root.QsWindow.window && root.QsWindow.window.screen
     ? String(root.QsWindow.window.screen.name) : ""
   readonly property bool startOnLogin: setting("startOnLogin", false) === true
@@ -335,17 +335,17 @@ Panel {
       + "lock_dir=\"$lock_root/deskloom\"; "
       + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
       + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; test -O \"$lock_dir\"; "
-      + "lock_file=\"$lock_dir/aur-install.lock\"; "
+      + "lock_file=\"$lock_dir/helper-install.lock\"; "
       + "if [ -L \"$lock_file\" ] || [ -e \"$lock_file\" ] && [ ! -f \"$lock_file\" ]; then exit 1; fi; "
       + "exec 9>\"$lock_file\"; flock -n 9 || exit 75; "
-      + "result_file=\"$lock_dir/aur-install-result-$1\"; "
+      + "result_file=\"$lock_dir/helper-install-result-$1\"; "
       + "if [ -L \"$result_file\" ] || [ -e \"$result_file\" ] && [ ! -f \"$result_file\" ]; then exit 1; fi; "
       + "rm -f \"$result_file\"; "
       + "installer=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/thethracian.deskloom/install-helper.sh\"; "
       + "if [ ! -x \"$installer\" ]; then code=1; result=failure; "
       + "elif \"$installer\"; then code=0; result=success; "
       + "else code=$?; result=failure; fi; "
-      + "temporary=$(mktemp \"$lock_dir/.aur-install-result.XXXXXX\"); "
+      + "temporary=$(mktemp \"$lock_dir/.helper-install-result.XXXXXX\"); "
       + "printf \"%s\\n\" \"$result\" > \"$temporary\"; chmod 600 \"$temporary\"; "
       + "mv -f \"$temporary\" \"$result_file\"; exit \"$code\"' deskloom "
       + installerAttemptId
@@ -366,7 +366,7 @@ Panel {
         + "lock_dir=\"$lock_root/deskloom\"; "
         + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
         + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; test -O \"$lock_dir\"; "
-        + "result_file=\"$lock_dir/aur-install-result-$1\"; "
+        + "result_file=\"$lock_dir/helper-install-result-$1\"; "
         + "if [ -L \"$result_file\" ] || [ -e \"$result_file\" ] && [ ! -f \"$result_file\" ]; then exit 1; fi; "
         + "if [ -f \"$result_file\" ]; then cat \"$result_file\"; fi",
       "deskloom", installerAttemptId
@@ -383,7 +383,7 @@ Panel {
         + "lock_dir=\"$lock_root/deskloom\"; "
         + "if [ -L \"$lock_dir\" ] || [ -e \"$lock_dir\" ] && [ ! -d \"$lock_dir\" ]; then exit 1; fi; "
         + "mkdir -p \"$lock_dir\"; chmod 700 \"$lock_dir\"; test -O \"$lock_dir\"; "
-        + "lock_file=\"$lock_dir/aur-install.lock\"; "
+        + "lock_file=\"$lock_dir/helper-install.lock\"; "
         + "if [ -L \"$lock_file\" ] || [ -e \"$lock_file\" ] && [ ! -f \"$lock_file\" ]; then exit 1; fi; "
         + "exec 9>\"$lock_file\"; "
         + "if flock -n 9; then printf free; else printf busy; fi"
@@ -609,9 +609,8 @@ Panel {
     repeat: false
     onTriggered: {
       if (!root.installingHelper) return
-      // The AUR terminal is deliberately detached, so the panel cannot kill
-      // or await it directly.  Keep the UI serialized until its user-scoped
-      // lock is free; a second click must never start a concurrent pacman job.
+      // The build terminal is detached. Keep the UI serialized until its
+      // user-scoped lock is free, even when compilation outlasts this timer.
       root.installerTimedOut = true
       root.busy = true
       root.statusText = "Installation is still running…"
@@ -1119,7 +1118,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: "Deskloom uses hyprloom to capture window positions, workspaces, monitors, and app launch commands."
+          text: "Deskloom uses Hyprloom for workspace and window management. Build it from source with Cargo in a visible terminal; Rust/Cargo, Git and a C toolchain are required."
           wrapMode: Text.WordWrap
           color: root.dim
           font.family: root.bar.fontFamily
@@ -1128,7 +1127,7 @@ Panel {
 
         Button {
           width: parent.width
-          text: root.busy ? "Installing…" : "Install hyprloom from AUR"
+          text: root.busy ? "Building Hyprloom…" : "Build and install Hyprloom"
           foreground: root.foreground
           fontFamily: root.bar.fontFamily
           bordered: true

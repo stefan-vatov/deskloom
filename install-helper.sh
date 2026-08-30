@@ -1,14 +1,43 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
 
 readonly package_name="hyprloom"
 readonly expected_version="0.4.0-dev.2"
-readonly source_repository="https://github.com/thethracian/hyprloom.git"
-readonly source_tag="v0.4.0-dev.2"
-readonly expected_source_commit="8b23252905b84698d40933286d52fc242fc164b8"
-readonly local_source="${DESKLOOM_HYPRLOOM_SOURCE:-$HOME/code/hyprloom}"
-readonly destination="$HOME/.local/bin/$package_name"
-readonly destination_marker="$HOME/.local/bin/.$package_name.sha256"
+readonly source_repository="https://github.com/stefan-vatov/hyprloom.git"
+readonly expected_source_commit="884dd246f060d0a9e94058b60070b00ccc8eb95c"
+readonly local_source="${DESKLOOM_HYPRLOOM_SOURCE:-}"
+readonly destination_dir="$HOME/.local/bin"
+readonly destination="$destination_dir/$package_name"
+readonly destination_marker="$destination_dir/.$package_name.sha256"
+
+fail() {
+  echo "Deskloom: $*" >&2
+  exit 1
+}
+
+check_destination() {
+  local current="" component mode
+  local -a components
+  IFS='/' read -r -a components <<< "${destination_dir#/}"
+  for component in "${components[@]}"; do
+    current="$current/$component"
+    [ ! -L "$current" ] || fail "refusing symlinked install directory: $current"
+    [ ! -e "$current" ] || [ -d "$current" ] || fail "not an install directory: $current"
+  done
+  for current in "$HOME/.local" "$destination_dir"; do
+    if [ -d "$current" ]; then
+      test -O "$current" || fail "install directory is not owned by you: $current"
+      mode=$(stat -c '%a' -- "$current")
+      (( (8#$mode & 0022) == 0 )) || fail "install directory is writable by another user: $current"
+    fi
+  done
+  for current in "$destination" "$destination_marker"; do
+    [ ! -L "$current" ] || fail "refusing symlinked install file: $current"
+    [ ! -e "$current" ] || { [ -f "$current" ] && test -O "$current"; } \
+      || fail "install file is not a regular file owned by you: $current"
+  done
+}
 
 binary_is_ready() {
   local binary="$1"
@@ -27,84 +56,68 @@ destination_is_ready() {
   [ "$expected" = "$expected_source_commit $actual" ]
 }
 
-write_destination_marker() {
-  local digest temporary
-  digest=$(sha256sum -- "$destination" | cut -d' ' -f1)
-  temporary=$(mktemp "$destination_marker.XXXXXX")
-  chmod 600 -- "$temporary"
-  printf '%s %s\n' "$expected_source_commit" "$digest" > "$temporary"
-  mv -f -- "$temporary" "$destination_marker"
-}
-
-install_binary() {
-  local binary="$1"
-  binary_is_ready "$binary" || return 1
-  install -Dm0755 -- "$binary" "$destination"
-  binary_is_ready "$destination" || return 1
-  write_destination_marker
-  destination_is_ready
-}
-
-build_from_source() {
-  local source="$1"
-  source_is_expected "$source" || return 1
-  command -v cargo >/dev/null 2>&1 || return 1
-  (
-    cd -- "$source"
-    # Never reuse a release artifact from an earlier checkout or build.  The
-    # source commit is pinned above, but the binary must also be produced by
-    # this invocation before it is copied into Deskloom's owned path.
-    cargo clean --release
-    cargo build --locked --release
-  )
-  install_binary "$source/target/release/$package_name"
-}
-
 source_is_expected() {
-  local source="$1"
-  [ -f "$source/Cargo.toml" ] || return 1
-  command -v git >/dev/null 2>&1 || return 1
+  local source="$1" status
+  [ -f "$source/Cargo.toml" ] && [ -f "$source/Cargo.lock" ] || return 1
   [ "$(git -C "$source" rev-parse HEAD 2>/dev/null)" = "$expected_source_commit" ] || return 1
-  [ -z "$(git -C "$source" status --porcelain --untracked-files=all 2>/dev/null)" ]
+  status=$(git -C "$source" status --porcelain --untracked-files=all) || return 1
+  [ -z "$status" ]
 }
 
+check_destination
 if destination_is_ready; then
+  echo "Hyprloom $expected_version is already installed and verified."
   exit 0
 fi
 
-# Let Omarchy's package helper install the normal Arch/AUR package and its
-# dependencies.  We still build the pinned source below: an AUR package is
-# user-contributed code and its self-reported source-digest must not be treated
-# as an independent proof of the binary's provenance.  Its terminal is
-# intentionally visible, so pacman can ask for the user's sudo password.
-if command -v omarchy-pkg-aur-add >/dev/null 2>&1; then
-  omarchy-pkg-aur-add "$package_name" || true
+for tool in cargo rustc git cc; do
+  command -v "$tool" >/dev/null 2>&1 \
+    || fail "$tool is required. Install Rust/Cargo, Git and a C toolchain, then retry."
+done
+
+source_args=(--git "$source_repository" --rev "$expected_source_commit")
+if [ -n "$local_source" ]; then
+  source_is_expected "$local_source" \
+    || fail "DESKLOOM_HYPRLOOM_SOURCE must be a clean checkout at pinned revision $expected_source_commit."
+  source_args=(--path "$local_source")
 fi
 
-# A local checkout is useful for development installs and for the maintainer's
-# own machine before the package has been published to the AUR.
-if source_is_expected "$local_source" && build_from_source "$local_source"; then
-  exit 0
+mkdir -p -- "$destination_dir"
+check_destination
+lock_file="$destination_dir/.hyprloom-install.lock"
+[ ! -L "$lock_file" ] && { [ ! -e "$lock_file" ] || { [ -f "$lock_file" ] && test -O "$lock_file"; }; } \
+  || fail "unsafe helper install lock: $lock_file"
+exec 8<>"$lock_file"
+flock -n 8 || fail "another Hyprloom installation is running."
+if destination_is_ready; then exit 0; fi
+
+build_root=$(mktemp -d "${TMPDIR:-/tmp}/deskloom-hyprloom.XXXXXX")
+publish_root=""
+cleanup() {
+  rm -rf -- "$build_root"
+  if [ -n "$publish_root" ]; then rm -rf -- "$publish_root"; fi
+}
+trap cleanup EXIT
+
+echo "Building Hyprloom $expected_version from $source_repository at $expected_source_commit."
+echo "Cargo will download dependencies and compile locally; the first build can take several minutes."
+if ! cargo install "${source_args[@]}" --locked --bin "$package_name" \
+    --root "$build_root/install" --target-dir "$build_root/target"; then
+  fail "Cargo build failed; the previous helper was not changed. Check the error above and that the pinned revision is published."
+fi
+built_binary="$build_root/install/bin/$package_name"
+binary_is_ready "$built_binary" || fail "built helper did not pass version/help checks; the previous helper was not changed."
+if [ -n "$local_source" ]; then
+  source_is_expected "$local_source" || fail "local checkout changed during the build; the previous helper was not changed."
 fi
 
-# Marketplace installs do not execute repository hooks.  After the fork's tag
-# is published, this source fallback makes the panel's one-click installer
-# useful even while the AUR package is still pending.  It builds locally rather
-# than installing an unverified binary downloaded from a release page.
-command -v git >/dev/null 2>&1 || {
-  echo "hyprloom is not installed: git is required for the source fallback." >&2
-  exit 1
-}
-command -v cargo >/dev/null 2>&1 || {
-  echo "hyprloom is not installed: cargo is required for the source fallback." >&2
-  exit 1
-}
-
-source_tmp=$(mktemp -d "${TMPDIR:-/tmp}/deskloom-hyprloom.XXXXXX")
-trap 'rm -rf -- "$source_tmp"' EXIT
-git clone --quiet --depth 1 --branch "$source_tag" "$source_repository" "$source_tmp/source"
-source_is_expected "$source_tmp/source" || {
-  echo "hyprloom source tag does not match the expected release commit." >&2
-  exit 1
-}
-build_from_source "$source_tmp/source"
+check_destination
+publish_root=$(mktemp -d "$destination_dir/.hyprloom-install.XXXXXX")
+install -m0755 -- "$built_binary" "$publish_root/hyprloom"
+digest=$(sha256sum -- "$publish_root/hyprloom" | cut -d' ' -f1)
+printf '%s %s\n' "$expected_source_commit" "$digest" > "$publish_root/marker"
+# Publish complete files by rename; until both are present, readiness fails closed.
+mv -fT -- "$publish_root/hyprloom" "$destination"
+mv -fT -- "$publish_root/marker" "$destination_marker"
+destination_is_ready || fail "installed helper verification failed."
+echo "Hyprloom $expected_version installed to $destination."

@@ -15,6 +15,24 @@
   and plugin together. Saved presets and existing settings are unchanged.
 - This work is a local development build, not a published release.
 
+## 0.4.0-dev.5 (local) - 2026-08-30
+
+### Changed
+
+- Replaced AUR setup with an explicit Cargo build from the pinned
+  `stefan-vatov/hyprloom` revision. No AUR recipe or automatic package install
+  is required; missing build tools are reported before compilation starts.
+- Added a short Omarchy install/configure/update/remove guide and moved local
+  development, tests, and diagnostics into separate documentation.
+
+### Compatibility
+
+- The helper version remains `0.4.0-dev.2`, but its source pin now identifies
+  the committed Hyprloom repository revision. Existing local-only helper pins
+  require a rebuild through the button or installer script.
+- Saved presets and restore behavior are unchanged. Public installs require
+  both the plugin and the pinned helper revision to be published.
+
 ## 0.4.0-dev.4 (local) - 2026-08-30
 
 ### Changed

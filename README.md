@@ -1,151 +1,117 @@
-# Deskloom
+# Deskloom for Omarchy
 
-Deskloom is a small Omarchy bar widget for named Hyprland workspace snapshots.
-It wraps [`hyprloom`](https://github.com/thethracian/hyprloom) and provides:
+Save your Hyprland workspace layouts and open them again from the Omarchy bar.
+Deskloom is the lightweight UI for [Hyprloom](https://github.com/stefan-vatov/hyprloom),
+the Rust CLI that captures, matches, and restores your windows.
 
-- named snapshot capture with overwrite support;
-- restore without disturbing the current desktop;
-- smart reconciliation that reuses, repairs, and launches only what is missing;
-- a guarded **Replace** action that validates the target, saves a safety
-  autosnapshot, closes current windows, restores in one helper operation, and
-  attempts safety recovery if the replacement fails;
-- snapshot listing, refresh, and deletion;
-- a temporary restore report showing what was found, adjusted, restored,
-  skipped, or failed, grouped by workspace;
-- settings for starting with Omarchy and choosing a default snapshot;
-- automatic default-snapshot restore a few seconds after Omarchy starts;
-- a one-click helper install action when `hyprloom` is missing. The installer
-  opens in an Omarchy floating terminal so sudo can prompt normally.
+## Features
 
-## Development install
+- Save named workspace snapshots and overwrite them when your layout changes.
+- **Open** reuses existing windows, adjusts their layout, and launches what is
+  missing. Unmatched windows stay where they are.
+- **Replace** asks for confirmation before closing current windows. It validates
+  the preset and saves a safety snapshot first, then attempts recovery if needed.
+- See color-coded restore results grouped by workspace, and reopen **Last restore**.
+- Choose a default preset to open when Omarchy starts.
+- Build the matching Hyprloom helper from source in a visible terminal—no AUR package.
 
-From this checkout:
+## Install
 
-```bash
-./install-local.sh
-```
-
-The plugin runs as unsandboxed QML inside `omarchy-shell`, like other Omarchy
-shell plugins. The local installer validates a complete staged copy before
-swapping it into the live plugin directory, so removed files do not linger
-after upgrades. Review changes before enabling it.
-
-The local installer gives each distinct QML/JavaScript bundle a content-specific
-entry-point URL. This prevents a long-running shell from silently reusing a
-cached older plugin after an update; it does not require a desktop restart.
-
-## Restore feedback
-
-After Open, Replace, or a login restore, Deskloom shows a small report near its
-bar button. Each workspace lists its windows by title and application, with
-labels for **Found existing**, **Adjusted existing**, **Restored**, **Left
-alone**, **Skipped**, and **Failed**. Failures include the helper's explanation;
-recovery is shown separately from completion of the requested preset.
-
-Matching count and row badges make outcomes scannable: blue for found existing,
-green for restored, amber for adjusted, gray for left alone, purple for skipped,
-and red for failed. Badge contrast adapts to the popup background; labels remain
-explicit so color is never the only way to tell outcomes apart.
-
-The report does not take focus. It closes after 12 seconds unless hovered; move
-the pointer away to restart the timer, or choose Close. Use **Last restore** in
-the main panel to reopen it. Only the most recent result is held in memory, and
-large reports scroll. Missing or unsupported output is reported as unavailable,
-not as a successful restore.
-
-Snapshot-operation errors are wrapped, selectable plain text. Longer errors
-scroll so the explanation and usage details remain readable. A failed list
-request is shown as a loading failure, not an empty collection of snapshots.
-
-This requires the matching Hyprloom build with `--report-json` support; install
-the plugin and helper together. Snapshot matching and restoration remain in
-the [Hyprloom CLI](https://github.com/stefan-vatov/hyprloom).
-
-## Settings
-
-Open the bar panel and choose **Settings** to:
-
-- enable **Start on login**;
-- select one saved snapshot as the **Default preset**;
-- refresh the snapshot list manually when needed.
-
-When both settings are enabled, Deskloom reconciles the selected preset shortly
-after the Omarchy shell starts. The reconciliation is additive and leaves
-unmatched windows alone; use the snapshot's **Replace** action when you want to
-close the current windows first. Replace stores a safety autosnapshot before
-closing anything, so a failed restore leaves a recoverable copy. On
-multi-monitor setups, the startup action is locked so it runs once for the
-desktop rather than once per bar instance.
-
-Replace intentionally closes every Hyprland client currently open, including
-windows excluded by the capture filters. Use Open when extra or ignored
-windows should remain untouched.
-
-Startup restore lives in the bar widget itself, so enabling Deskloom through the
-normal Omarchy marketplace also enables the default-preset behavior.
-
-## Dependency behavior
-
-Omarchy's plugin clone/install command intentionally does not execute plugin
-code or install hooks, so a plugin cannot safely force a package install merely
-because it was cloned from a website. Deskloom detects `hyprloom` and exposes a
-first-run install button. That button opens an Omarchy floating terminal and
-runs the idempotent helper installer. It first tries the AUR package:
+Requires Omarchy with shell-plugin support, Hyprland, Git, Rust/Cargo, and a C
+toolchain. Check your build tools with:
 
 ```bash
-omarchy-launch-floating-terminal-with-presentation omarchy-pkg-aur-add hyprloom
+command -v git cargo rustc cc
 ```
 
-The AUR helper uses an idempotent `yay --needed` install. If the package has not
-been published yet, the installer uses the local `~/code/hyprloom` checkout or,
-after the fork's tagged source is published, clones that tag and builds it in
-the user's home directory. The user sees the normal terminal output and can
-enter their sudo password there; Deskloom never collects or handles the
-password itself.
+If tools are missing, install them first. On Omarchy, `omarchy pkg add git rust base-devel`
+provides them from Arch packages. If you already use Rust through rustup, keep
+that toolchain instead of also installing the `rust` package.
 
-The installer accepts only `hyprloom 0.4.0-dev.2` and the pinned source revision, so an
-older binary or stale checkout cannot silently satisfy the dependency check.
-
-`0.4.0-dev.2` is a local development build, not a published release. A local
-installation retains a clean source snapshot and points its helper installer
-at that snapshot; the remote tag fallback is available only after publication.
-
-The helper's local integration check can be run from this checkout with:
+Add and enable the plugin:
 
 ```bash
-./tests/install_helper_integration.sh
+omarchy plugin add https://github.com/stefan-vatov/deskloom.git --enable
 ```
 
-Reporting checks:
+Open Deskloom in the bar and choose **Build and install Hyprloom**. A floating
+terminal downloads the pinned source and Cargo dependencies, then compiles and
+installs the helper. The first build can take several minutes. When it finishes,
+the panel shows your saved snapshots and the save controls.
 
-```sh
-node --test tests/panel_reporting.test.mjs tests/install_reporting.test.mjs
-./tests/reporting/run.sh
-HYPRLOOM_BIN=/path/to/hyprloom node --test tests/cli_report_contract.test.mjs
-node tests/native-panel/run.cjs
+Omarchy does not execute README instructions or install hooks. Installing the
+plugin and choosing to build its helper are separate, explicit actions.
+
+This is a development build. To work on unpublished changes, use the
+[local development workflow](docs/development.md).
+
+The widget defaults to the right section. To move it:
+
+```bash
+omarchy bar move thethracian.deskloom --section right
 ```
 
-The cross-layer test uses a real CLI build with isolated snapshots and a fake
-compositor executable; it never restores the live desktop.
+## Configure
 
-The native-panel check requires Bubblewrap and compiles the complete production
-panel with its actual command builder and process/output handlers. A fake
-helper is mounted only inside a private, offscreen filesystem sandbox.
-It also reproduces the unchanged-URL cache behavior that made reload logs alone
-insufficient evidence of a successful update.
+Open the panel, save a snapshot, then choose **Settings** to select its
+**Default preset** and enable **Start on login**. Startup restore uses Open's
+additive behavior and runs once for the desktop, including multi-monitor setups.
 
-With the pinned helper installed, run
-`DESKLOOM_TEST_INSTALLED_HELPER=1 node tests/native-panel/run.cjs` to also test
-native list/save/restore using the real CLI, temporary snapshots, and a fake
-read-only compositor. No real desktop restore is performed.
+Use **Open** when unrelated windows should remain untouched. **Replace** closes
+every current Hyprland window, including windows excluded by capture filters;
+save your work before confirming it. Deleting a saved snapshot has its own
+confirmation.
 
-To inspect a loaded monitor instance without restoring anything:
+## Restore reports
 
-```sh
-omarchy-shell thethracian.deskloom.DP-1 status
+After Open, Replace, or a login restore, a temporary popup shows each window's
+title, application, workspace, and outcome:
+
+- Blue: found existing. Green: restored. Amber: adjusted existing.
+- Gray: left alone. Purple: skipped. Red: failed, with an explanation.
+
+Labels remain explicit, so color is not the only distinction. The popup does
+not take focus; hover to keep it open, or use **Last restore** to reopen it.
+Only the latest report is kept in memory. Long reports and operation errors
+scroll; missing reports are never presented as successful restores.
+
+## Dependencies and security
+
+Like other Omarchy plugins, Deskloom runs unsandboxed with your user permissions.
+Review the code before enabling it. Window-management logic stays in Hyprloom.
+
+The build button runs `cargo install` against an exact Git revision with
+`--locked`, in a temporary build/install directory. After version and help checks,
+it installs `~/.local/bin/hyprloom` with a source-revision and SHA-256 marker.
+A matching verified install is reused. A failed build leaves the old helper
+untouched. There are no AUR calls, automatic package installs, or sudo prompts.
+
+The helper build needs network access to fetch source and dependencies; normal
+snapshot operations use your local Hyprland session. A safety snapshot preserves
+window-launch/layout information—it cannot guarantee recovery of unsaved app data.
+
+## Update
+
+```bash
+omarchy plugin update thethracian.deskloom
 ```
 
-Use your monitor name in place of `DP-1` (URL-encoded if necessary). The result
-includes the loaded component URL, separate plugin/helper versions, helper
-readiness, snapshot-list state/count, and retained report counts. It does not
-expose window titles or start helper operations.
+If an update requires a different helper revision, the panel offers **Build and
+install Hyprloom** again. Saved presets remain in place. Local development
+installs are not Git-managed; update those with `./install-local.sh` from the checkout.
+
+## Remove
+
+```bash
+omarchy plugin remove thethracian.deskloom
+```
+
+This removes the plugin, not your saved Hyprloom presets or the compiled helper.
+
+## Development
+
+See [local installation, tests, and diagnostics](docs/development.md).
+
+## License
+
+MIT (declared in the plugin manifest).

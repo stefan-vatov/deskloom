@@ -5,6 +5,19 @@ import vm from "node:vm";
 
 const source = fs.readFileSync(new URL("../Panel.qml", import.meta.url), "utf8");
 
+test("helper setup is an explicit Cargo build with matching release metadata", () => {
+  const installer = fs.readFileSync(new URL("../install-helper.sh", import.meta.url), "utf8");
+  const pin = installer.match(/readonly expected_source_commit="([^"]+)"/)[1];
+  const version = installer.match(/readonly expected_version="([^"]+)"/)[1];
+  assert.ok(source.includes(`helperSourceCommit: "${pin}"`));
+  assert.ok(source.includes(`helperVersion: "${version}"`));
+  assert.match(source, /Build and install Hyprloom/);
+  assert.match(source, /omarchy-launch-floating-terminal-with-presentation/);
+  assert.doesNotMatch(source, /AUR|aur-install|pacman/);
+  assert.equal((source.match(/helper-install\.lock/g) || []).length, 2);
+  assert.equal((source.match(/helper-install-result-\$1/g) || []).length, 2);
+});
+
 test("report diagnostics in the panel status remain plain text", () => {
   const status = source.match(/TextEdit \{[^{}]*text: root\.statusText[^{}]*\}/);
   assert.ok(status);
