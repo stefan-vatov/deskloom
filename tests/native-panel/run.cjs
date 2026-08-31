@@ -5,7 +5,7 @@ const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const root = path.resolve(__dirname, '../..');
 const stage = fs.mkdtempSync('/tmp/deskloom-native-');
-function run(name, fakeHelper = true) {
+function run(name, fakeHelper = true, extraEnv = {}) {
   fs.copyFileSync(path.join(__dirname, name), path.join(stage, 'shell.qml'));
   const result = spawnSync('/usr/bin/bwrap', [
     '--unshare-all', '--die-with-parent', '--new-session', '--ro-bind', '/', '/',
@@ -18,7 +18,7 @@ function run(name, fakeHelper = true) {
       '--ro-bind', path.join(process.env.DESKLOOM_TEST_HELPER_ROOT, 'bin/.hyprloom.sha256'), path.join(process.env.HOME, '.local/bin/.hyprloom.sha256')
     ] : []),
     '/usr/bin/quickshell', '--path', path.join(stage, 'shell.qml')],
-    { env, encoding: 'utf8', timeout: 15000 });
+    { env: { ...env, ...extraEnv }, encoding: 'utf8', timeout: 15000 });
   const output = (result.stdout || '') + (result.stderr || '');
   process.stdout.write(output);
   if (result.error || result.status !== 0 || !output.includes('NATIVE_PASS') || output.includes('NATIVE_FAIL')
@@ -56,6 +56,7 @@ try {
   run('commands.qml');
   run('fixture.qml');
   run('consent.qml');
+  run('recovery.qml', true, { FIXTURE_RECOVER_FAIL: '1' });
   if (process.env.DESKLOOM_TEST_INSTALLED_HELPER === '1') {
     const sessions = path.join(env.XDG_DATA_HOME, 'hyprloom/sessions');
     const bin = path.join(stage, 'bin');

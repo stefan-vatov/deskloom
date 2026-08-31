@@ -794,7 +794,9 @@ Panel {
       if (timedOut) {
         root.statusText = "Startup recovery timed out; continuing carefully."
       } else if (exitCode !== 0) {
-        var error = String(startupRecoveryError.text || "").trim().split("\n")[0]
+        // Keep the complete helper diagnostic: the tail can carry the safety
+        // snapshot name and the manual remediation steps.
+        var error = String(startupRecoveryError.text || "").trim()
         root.statusText = "Startup recovery failed"
           + (error === "" ? ". Continuing carefully." : ": " + error)
       }
@@ -995,7 +997,8 @@ Panel {
       } else if (exitCode === 0) {
         root.statusText = "Replace timed out; desktop recovery completed."
       } else {
-        var error = String(recoveryError.text || "").trim().split("\n")[0]
+        // Keep the complete helper diagnostic for the report surface.
+        var error = String(recoveryError.text || "").trim()
         root.statusText = "Desktop recovery failed"
           + (error === "" ? ". Try Restore again." : ": " + error)
       }

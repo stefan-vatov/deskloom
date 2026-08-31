@@ -13,7 +13,20 @@ if (operation === 'cache-update') {
     require('node:path').join(require('node:path').dirname(process.env.FIXTURE_DYNAMIC), 'RevisionTwo.qml'));
   process.exit(0);
 }
-if (operation === 'recover') { assert.deepEqual(argv, ['recover']); process.exit(0); }
+if (operation === 'recover') {
+  assert.deepEqual(argv, ['recover']);
+  if (process.env.FIXTURE_RECOVER_FAIL === '1') {
+    // Chunked, delayed, multiline stderr without a trailing newline.
+    process.stderr.write('startup recovery step failed\n');
+    const pad = Array.from({ length: 24 }, (_, i) => `remediation line ${i}: run hyprloom restore autosave-keep`).join('\n');
+    setTimeout(() => {
+      process.stderr.write(`safety snapshot: autosave-keep\n${pad}\nfinal manual step: hyprloom restore autosave-keep`);
+      process.exit(1);
+    }, 40);
+    return;
+  }
+  process.exit(0);
+}
 if (operation === 'list') {
   assert.deepEqual(argv, ['list']);
   const deleted = new Set();
