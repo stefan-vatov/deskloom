@@ -44,10 +44,13 @@ function operationHarness() {
   const context = withBusyStubs({
     busy: false,
     helperInstalled: true,
+    pendingReplaceRevision: "",
+    pendingDeleteRevision: "",
     operationProcess: {},
     operationTimeout: { restart() {} },
     restoreReportPopup: { dismiss() {} },
     logConsent() {},
+    revisionOf() { return ""; },
     root: { helperProcessCommand: args => args },
   });
   return { context, run: panelFunction("runOperation", context) };

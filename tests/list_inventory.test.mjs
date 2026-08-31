@@ -10,6 +10,11 @@ const source = fs.readFileSync(new URL("../Panel.qml", import.meta.url), "utf8")
 
 function inventoryHarness(prior = [{ name: "old", windows: 2, created: "yesterday", automatic: false }]) {
   const context = {
+    pendingReplaceName: "",
+    pendingReplaceRevision: "",
+    pendingDeleteName: "",
+    pendingDeleteRevision: "",
+    logConsent() {},
     snapshots: prior,
     snapshotsLoaded: true,
     snapshotListFailed: false,

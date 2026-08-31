@@ -37,7 +37,10 @@ function consentHarness() {
     operationTimedOut: false,
     recoveryRunning: false,
     statusText: "",
-    snapshots: [{ name: "work" }],
+    snapshots: [
+      { name: "work", windows: 3, created: "c", automatic: false, revision: "aaaa1111aaaa1111" },
+      { name: "play", windows: 1, created: "c", automatic: false, revision: "bbbb2222bbbb2222" },
+    ],
     defaultPreset: "",
     operationProcess: { running: false },
     operationOutput: { text: "" },
@@ -52,6 +55,10 @@ function consentHarness() {
     refreshList() { context.refreshes = (context.refreshes || 0) + 1; },
     removeSnapshot() {},
     persistSettings() {},
+    revisionOf(name) {
+      const row = context.snapshots.find(s => s.name === name);
+      return row ? row.revision : "";
+    },
     operationSummary() { return "summary"; },
     presentRestoreReport() {},
     startTimedOutReplaceRecovery() { context.recoveryStarted = true; },
@@ -106,7 +113,8 @@ test("accepted replace launch consumes both tokens synchronously", t => {
   h.requestReplace("work");
   assert.equal(h.context.pendingReplaceName, "", "consent must not survive the accepted launch");
   assert.equal(h.context.pendingDeleteName, "");
-  assert.deepEqual(Array.from(h.context.operationProcess.command), ["replace", "work", "--report-json"]);
+  assert.deepEqual(Array.from(h.context.operationProcess.command),
+    ["replace", "work", "--report-json", "--if-revision", "aaaa1111aaaa1111"]);
   assert.equal(h.context.busy, true);
 });
 
@@ -116,7 +124,8 @@ test("accepted delete launch consumes both tokens synchronously", t => {
   h.requestDelete("work");
   assert.equal(h.context.pendingDeleteName, "", "consent must not survive the accepted launch");
   assert.equal(h.context.pendingReplaceName, "");
-  assert.deepEqual(Array.from(h.context.operationProcess.command), ["delete", "work"]);
+  assert.deepEqual(Array.from(h.context.operationProcess.command),
+    ["delete", "work", "--if-revision", "aaaa1111aaaa1111"]);
 });
 
 test("an intervening accepted save clears an armed destructive token", t => {
@@ -137,7 +146,8 @@ test("failed intervening input cannot resurrect or inherit destructive consent",
   h.requestReplace("work");
   assert.equal(h.context.pendingReplaceName, "work", "a fresh arm needs a new confirmation click");
   h.requestReplace("work");
-  assert.deepEqual(Array.from(h.context.operationProcess.command), ["replace", "work", "--report-json"]);
+  assert.deepEqual(Array.from(h.context.operationProcess.command),
+    ["replace", "work", "--report-json", "--if-revision", "aaaa1111aaaa1111"]);
 });
 
 test("nonzero replace leaves no reusable consent and no operation identity", t => {
@@ -211,4 +221,34 @@ test("consent transitions are logged as sanitized generations without snapshot n
   ]);
   for (const line of h.context.consentLog)
     assert.doesNotMatch(line, /work/, "consent logs must not record snapshot names");
+});
+
+test("arming destructive consent captures the confirmed snapshot revision", () => {
+  const h = consentHarness();
+  h.requestReplace("work");
+  assert.equal(h.context.pendingReplaceRevision, "aaaa1111aaaa1111",
+    "the arm must bind to the revision the user saw");
+  h.requestReplace("work");
+  assert.deepEqual(Array.from(h.context.operationProcess.command).slice(-2),
+    ["--if-revision", "aaaa1111aaaa1111"], "the confirmed revision must guard the mutation");
+});
+
+test("a list refresh that changes a target's revision invalidates the armed consent", () => {
+  const h = consentHarness();
+  h.requestReplace("work");
+  h.context.snapshots = [
+    { name: "work", windows: 9, created: "c", automatic: false, revision: "cccc3333cccc3333" },
+  ];
+  h.runOperation("replace", "work");
+  assert.equal(h.context.pendingReplaceName, "", "stale consent must be invalidated by the refresh");
+  assert.equal(h.context.operationProcess.command, undefined, "a stale arm must not launch");
+});
+
+test("delete consent binds to the revision and guards the delete", () => {
+  const h = consentHarness();
+  h.requestDelete("play");
+  assert.equal(h.context.pendingDeleteRevision, "bbbb2222bbbb2222");
+  h.requestDelete("play");
+  assert.deepEqual(Array.from(h.context.operationProcess.command).slice(-2),
+    ["--if-revision", "bbbb2222bbbb2222"]);
 });

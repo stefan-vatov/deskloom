@@ -62,7 +62,9 @@ Panel {
   property string statusText: ""
   property string saveName: "work"
   property string pendingDeleteName: ""
+  property string pendingReplaceRevision: ""
   property string pendingReplaceName: ""
+  property string pendingDeleteRevision: ""
   property string operationKind: ""
   property string operationName: ""
   property var snapshots: []
@@ -500,10 +502,28 @@ Panel {
     // Destructive confirmation is a one-use consent capability.  Consuming
     // both tokens here, at the accepted launch boundary, means a failed,
     // timed-out, recovered, or intervening attempt can never be re-fired by
-    // a stale token after a view reopen.
-    if (kind === "replace" || kind === "delete") logConsent("consumed-" + kind)
+    // a stale token after a view reopen.  The confirmed revision travels
+    // with the command: hyprloom refuses the mutation if the snapshot no
+    // longer matches what the user confirmed.
+    var armedReplaceRevision = pendingReplaceRevision
+    var armedDeleteRevision = pendingDeleteRevision
+    if (kind === "replace" || kind === "delete") {
+      if (revisionOf(operationArgument) !== armedReplaceRevision
+        && revisionOf(operationArgument) !== armedDeleteRevision) {
+        logConsent("invalidated-revision-changed")
+        pendingReplaceName = ""
+        pendingDeleteName = ""
+        pendingReplaceRevision = ""
+        pendingDeleteRevision = ""
+        statusText = "The snapshot changed since you confirmed; confirm again."
+        return
+      }
+      logConsent("consumed-" + kind)
+    }
     pendingDeleteName = ""
     pendingReplaceName = ""
+    pendingDeleteRevision = ""
+    pendingReplaceRevision = ""
 
     operationKind = kind
     operationName = operationArgument
@@ -521,9 +541,13 @@ Panel {
       // closes windows, and reconciles in one helper process.  This keeps
       // Replace from destroying the current desktop after a stale preflight.
       restoreReportPopup.dismiss()
-      operationProcess.command = root.helperProcessCommand(["replace", name, "--report-json"])
+      var replaceArgs = ["replace", name, "--report-json"]
+      if (armedReplaceRevision !== "") replaceArgs.push("--if-revision", armedReplaceRevision)
+      operationProcess.command = root.helperProcessCommand(replaceArgs)
     } else if (kind === "delete") {
-      operationProcess.command = root.helperProcessCommand(["delete", name])
+      var deleteArgs = ["delete", name]
+      if (armedDeleteRevision !== "") deleteArgs.push("--if-revision", armedDeleteRevision)
+      operationProcess.command = root.helperProcessCommand(deleteArgs)
     } else {
       busy = false
       return
@@ -574,6 +598,21 @@ Panel {
     snapshots = next
     root.snapshotsLoaded = true
     root.snapshotListFailed = false
+    if (pendingReplaceName !== "" || pendingDeleteName !== "") {
+      var replaceRow = pendingReplaceName === "" ? null
+        : next.find(function(snapshot) { return snapshot.name === pendingReplaceName })
+      var deleteRow = pendingDeleteName === "" ? null
+        : next.find(function(snapshot) { return snapshot.name === pendingDeleteName })
+      if (pendingReplaceName !== "" && (replaceRow === undefined || replaceRow.revision !== pendingReplaceRevision)) {
+        pendingReplaceName = ""
+        statusText = "The snapshot changed while the list refreshed; confirm again."
+        logConsent("invalidated-revision-changed")
+      }
+      if (pendingDeleteName !== "" && (deleteRow === undefined || deleteRow.revision !== pendingDeleteRevision)) {
+        pendingDeleteName = ""
+        logConsent("invalidated-revision-changed")
+      }
+    }
     if (root.defaultPreset !== ""
       && !next.some(function(snapshot) { return snapshot.name === root.defaultPreset })) {
       root.persistSettings({ defaultPreset: "" })
@@ -613,7 +652,9 @@ Panel {
     if (root.pendingDeleteName !== target) {
       if (!root.snapshotActionsReady()) return
       root.pendingDeleteName = target
+      root.pendingDeleteRevision = revisionOf(target)
       root.pendingReplaceName = ""
+      root.pendingReplaceRevision = ""
       root.statusText = "Click Confirm to delete '" + target + "'."
       logConsent("armed-delete")
       return
@@ -633,6 +674,13 @@ Panel {
     })
   }
 
+  function revisionOf(name) {
+    var row = null
+    for (var index = 0; index < snapshots.length; index++)
+      if (snapshots[index].name === name) { row = snapshots[index]; break }
+    return row && typeof row.revision === "string" ? row.revision : ""
+  }
+
   function requestReplace(name) {
     var target = String(name || "")
     if (target === "") return
@@ -640,7 +688,9 @@ Panel {
     if (root.pendingReplaceName !== target) {
       if (!root.snapshotActionsReady()) return
       root.pendingReplaceName = target
+      root.pendingReplaceRevision = revisionOf(target)
       root.pendingDeleteName = ""
+      root.pendingDeleteRevision = ""
       root.statusText = "Click Replace again to close current windows."
       logConsent("armed-replace")
       return
@@ -1075,6 +1125,8 @@ Panel {
         // state; a new attempt requires a fresh confirmation.
         root.pendingDeleteName = ""
         root.pendingReplaceName = ""
+        root.pendingDeleteRevision = ""
+        root.pendingReplaceRevision = ""
         root.operationKind = ""
         root.operationName = ""
         if (!isRestore) root.statusText = "Operation failed: " + root.operationSummary(true)
@@ -1124,6 +1176,8 @@ Panel {
       }
       root.pendingDeleteName = ""
       root.pendingReplaceName = ""
+      root.pendingDeleteRevision = ""
+      root.pendingReplaceRevision = ""
       root.presentRestoreReport("", root.statusText, 1, root.operationName, true)
       root.operationKind = ""
       root.operationName = ""
