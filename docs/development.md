@@ -47,10 +47,16 @@ namespace; they never replace your installed helper or invoke package managers.
 
 ```bash
 ./tests/install_helper_integration.sh
+./tests/install_local_integration.sh
 node --test tests/panel_reporting.test.mjs tests/install_reporting.test.mjs
 ./tests/reporting/run.sh
 node tests/native-panel/run.cjs
 ```
+
+The local installer tests seed interrupted transaction states (marker phase,
+backup, target payloads) and assert the recovery decision table: a missing
+named backup is refused without deleting the restored prior plugin, and only a
+proven first-install marker removes an installed target.
 
 Reporting tests also require Qt's `qmltestrunner`; native tests require the
 installed Omarchy QML components and Quickshell. See the

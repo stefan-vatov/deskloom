@@ -180,40 +180,92 @@ recover_install_transaction() {
       ;;
   esac
 
+  local target_present=false backup_presence=absent target_digest=none
+  if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
+    target_present=true
+  fi
+  if [ -n "$backup_path" ]; then
+    if [ -e "$backup_path" ] || [ -L "$backup_path" ]; then
+      backup_presence=present
+    else
+      backup_presence=missing
+    fi
+  fi
+  if [ "$target_present" = true ]; then
+    target_digest=$(cd -- "$target_dir" && find . -mindepth 1 -type f -print0 2>/dev/null \
+      | sort -z | xargs -0 -r sha256sum 2>/dev/null | sha256sum | cut -c1-12) || target_digest=unavailable
+  fi
+
+  local decision=none
+  if [ "$backup_presence" = present ]; then
+    case "$phase" in
+      prepared|backed-up|installed)
+        decision=restore-backup
+        ;;
+      committed)
+        if [ "$target_present" = true ]; then
+          decision=discard-backup
+        else
+          decision=restore-backup
+        fi
+        ;;
+    esac
+  elif [ "$phase" = installed ] && [ "$target_present" = true ]; then
+    if [ "$backup_name" = none ]; then
+      # Only a marker that never named a backup proves a first installation:
+      # there is no prior plugin, so removing the partial install is the
+      # rollback.
+      decision=remove-first-install
+    else
+      # The named backup is gone while an installed plugin exists.  The
+      # restore rename may already have put the prior plugin back, so the
+      # target cannot be proven disposable.  Never delete it here.
+      decision=refuse-ambiguous-restore
+    fi
+  fi
+  echo "Deskloom install recovery: marker_fields=${#fields[@]} phase=$phase backup=$backup_presence target=$target_present target_digest=$target_digest decision=$decision" >&2
+  if [ "$decision" = refuse-ambiguous-restore ]; then
+    echo "Refusing to recover Deskloom: rollback backup '$backup_name' is missing while an installed plugin exists, so the transaction outcome is ambiguous. Verify the installed plugin is the version you want, then remove the transaction marker ($transaction_marker) to continue." >&2
+    return 1
+  fi
+
   case "$phase" in
     prepared|backed-up|installed)
       registry_dirty=false
-      if [ -n "$backup_path" ] && { [ -e "$backup_path" ] || [ -L "$backup_path" ]; }; then
-        if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
+      case "$decision" in
+        restore-backup)
+          if [ "$target_present" = true ]; then
+            rm -rf -- "$target_dir"
+          fi
+          mv -- "$backup_path" "$target_dir"
+          registry_dirty=true
+          sync_path "$backup_root"
+          sync_path "$target_parent"
+          ;;
+        remove-first-install)
           rm -rf -- "$target_dir"
-        fi
-        mv -- "$backup_path" "$target_dir"
-        registry_dirty=true
-        sync_path "$backup_root"
-        sync_path "$target_parent"
-      elif [ "$phase" = installed ] && { [ -e "$target_dir" ] || [ -L "$target_dir" ]; }; then
-        # This was a first install.  There is no prior plugin to restore.
-        rm -rf -- "$target_dir"
-        registry_dirty=true
-        sync_path "$target_parent"
-      fi
+          registry_dirty=true
+          sync_path "$target_parent"
+          ;;
+      esac
       if [ "$registry_dirty" = true ]; then
         omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
         restore_plugin_enabled_state "$previous_enabled"
       fi
       ;;
     committed)
-      if [ -n "$backup_path" ] && { [ -e "$backup_path" ] || [ -L "$backup_path" ]; }; then
-        if [ -e "$target_dir" ] || [ -L "$target_dir" ]; then
+      case "$decision" in
+        discard-backup)
           rm -rf -- "$backup_path"
           sync_path "$backup_root"
-        elif [ -e "$backup_path" ] || [ -L "$backup_path" ]; then
+          ;;
+        restore-backup)
           mv -- "$backup_path" "$target_dir"
           omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
           sync_path "$backup_root"
           sync_path "$target_parent"
-        fi
-      fi
+          ;;
+      esac
       ;;
   esac
   rm -f -- "$transaction_marker"
