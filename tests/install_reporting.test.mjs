@@ -21,7 +21,7 @@ test("local installer deploys all report components as a complete plugin", () =>
     fs.mkdirSync(bin);
     fs.mkdirSync(runtime);
     fs.mkdirSync(source);
-    for (const file of ["install-local.sh", "install-helper.sh", "manifest.json", "README.md", "Panel.qml", ...reportingFiles])
+    for (const file of ["install-local.sh", "install-helper.sh", "package-plugin.sh", "manifest.json", "README.md", "Panel.qml", ...reportingFiles])
       fs.copyFileSync(path.join(project, file), path.join(source, file));
     fs.writeFileSync(path.join(bin, "omarchy"), `#!/bin/sh
 set -eu

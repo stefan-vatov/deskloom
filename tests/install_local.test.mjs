@@ -20,7 +20,7 @@ const OLD_SENTINEL = "prior plugin payload unique to the previous install\n";
 function seedCheckout(dir) {
   fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
   for (const name of [
-    "install-local.sh", "install-helper.sh", "manifest.json", "README.md",
+    "install-local.sh", "install-helper.sh", "package-plugin.sh", "manifest.json", "README.md",
     "Panel.qml", "RestoreReport.js", "RestoreReportView.qml", "RestoreReportPopup.qml",
   ]) {
     fs.copyFileSync(path.join(project, name), path.join(dir, name));

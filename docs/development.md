@@ -121,6 +121,24 @@ scrollable in the panel; a failed listing is not an empty snapshot collection.
 
 ## Publish an installable revision
 
+Runtime code ships as a content-addressed bundle. After changing any runtime
+file (Panel.qml, RestoreReport.js, RestoreReportView.qml, RestoreReportPopup.qml),
+repackage the public artifact before committing so `omarchy plugin update`
+picks up a fresh component URL without a shell restart:
+
+```bash
+./package-plugin.sh . .
+./package-plugin.sh --check .
+```
+
+The command discovers the declared local import closure, computes the bundle
+identity from all shipped bytes, modes, and paths, and rewrites the manifest
+atomically. Old runtime/ bundles are kept so a Git rollback still has its
+matching bytes; prune superseded bundles only when no in-flight install can
+need them.
+
+
+
 Publish the pinned Hyprloom commit before the Deskloom change that requires it.
 Keep `expected_source_commit` and `expected_version` in `install-helper.sh` aligned
 with `helperSourceCommit` and `helperVersion` in `Panel.qml`; tests check the pair.
