@@ -32,7 +32,8 @@ const env = { HOME: process.env.HOME, PATH: '/usr/bin:/bin', LANG: 'C.UTF-8',
   XDG_CACHE_HOME: path.join(stage, 'cache'), XDG_STATE_HOME: path.join(stage, 'state'),
   XDG_DATA_HOME: path.join(stage, 'data'), FIXTURE_NODE: process.execPath,
   FIXTURE_HELPER: path.join(stage, 'helper.cjs'), FIXTURE_DYNAMIC: path.join(stage, 'dynamic.qml'),
-  FIXTURE_PANEL: path.join(stage, 'production', 'Panel.qml'), FIXTURE_STATE: path.join(stage, 'saved.json') };
+  FIXTURE_PANEL: path.join(stage, 'production', 'Panel.qml'), FIXTURE_STATE: path.join(stage, 'saved.json'),
+  FIXTURE_DESTRUCTIVE: path.join(stage, 'destructive.txt') };
 try {
   for (const dir of ['runtime', 'config', 'cache', 'state', 'data', 'production'])
     fs.mkdirSync(path.join(stage, dir), { mode: 0o700 });
@@ -54,6 +55,7 @@ try {
   run('compile.qml');
   run('commands.qml');
   run('fixture.qml');
+  run('consent.qml');
   if (process.env.DESKLOOM_TEST_INSTALLED_HELPER === '1') {
     const sessions = path.join(env.XDG_DATA_HOME, 'hyprloom/sessions');
     const bin = path.join(stage, 'bin');
@@ -90,5 +92,5 @@ try {
   console.error(error.message);
   process.exitCode = 1;
 } finally {
-  fs.rmSync(stage, { recursive: true, force: true });
+  if (!process.env.KEEP_STAGE) fs.rmSync(stage, { recursive: true, force: true });
 }

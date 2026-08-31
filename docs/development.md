@@ -48,7 +48,7 @@ namespace; they never replace your installed helper or invoke package managers.
 ```bash
 ./tests/install_helper_integration.sh
 ./tests/install_local_integration.sh
-node --test tests/panel_reporting.test.mjs tests/install_reporting.test.mjs
+node --test tests/panel_consent.test.mjs tests/panel_reporting.test.mjs tests/install_reporting.test.mjs
 ./tests/reporting/run.sh
 node tests/native-panel/run.cjs
 ```
@@ -61,6 +61,13 @@ restored the payload but not yet reconciled the plugin registry is recorded in
 a durable rollback-registry-pending phase; recovery resumes it without
 renaming or deleting payload files, and the marker is consumed only after the
 recorded enabled/absent state is verified.
+
+The consent tests model destructive Replace/Delete confirmation as a one-use
+capability: arming captures the target, the accepted launch consumes both
+tokens synchronously, and no failure, timeout, recovery handoff, or unrelated
+operation leaves a reusable token behind. The native panel scenario drives the
+production request/confirm path against failing and succeeding fake helpers
+and counts destructive invocations.
 
 Reporting tests also require Qt's `qmltestrunner`; native tests require the
 installed Omarchy QML components and Quickshell. See the

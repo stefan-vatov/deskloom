@@ -420,6 +420,13 @@ Panel {
       }
     }
 
+    // Destructive confirmation is a one-use consent capability.  Consuming
+    // both tokens here, at the accepted launch boundary, means a failed,
+    // timed-out, recovered, or intervening attempt can never be re-fired by
+    // a stale token after a view reopen.
+    pendingDeleteName = ""
+    pendingReplaceName = ""
+
     operationKind = kind
     operationName = operationArgument
     operationTimedOut = false
@@ -523,6 +530,30 @@ Panel {
     Qt.callLater(function() {
       if (root.pendingDeleteName === target && root.snapshotActionsReady())
         root.runOperation("delete", target)
+    })
+  }
+
+  function requestReplace(name) {
+    var target = String(name || "")
+    if (target === "") return
+
+    if (root.pendingReplaceName !== target) {
+      if (!root.snapshotActionsReady()) return
+      root.pendingReplaceName = target
+      root.pendingDeleteName = ""
+      root.statusText = "Click Replace again to close current windows."
+      return
+    }
+
+    if (!root.snapshotActionsReady()) {
+      root.statusText = "Still refreshing snapshots; click Replace again when ready."
+      return
+    }
+
+    // Same deferred-start contract as the delete flow above.
+    Qt.callLater(function() {
+      if (root.pendingReplaceName === target && root.snapshotActionsReady())
+        root.runOperation("replace", target)
     })
   }
 
@@ -918,7 +949,12 @@ Panel {
         root.operationName = ""
         root.refreshList()
       } else {
-        if (completedKind === "delete") root.pendingDeleteName = ""
+        // Terminal failure releases the operation identity and any consent
+        // state; a new attempt requires a fresh confirmation.
+        root.pendingDeleteName = ""
+        root.pendingReplaceName = ""
+        root.operationKind = ""
+        root.operationName = ""
         if (!isRestore) root.statusText = "Operation failed: " + root.operationSummary(true)
       }
     }
@@ -1281,6 +1317,7 @@ Panel {
               }
 
               Button {
+                objectName: "replaceButton-" + modelData.name
                 text: root.pendingReplaceName === modelData.name ? "Sure?" : "Replace"
                 foreground: root.pendingReplaceName === modelData.name ? root.urgent : root.foreground
                 fontFamily: root.bar.fontFamily
@@ -1289,18 +1326,11 @@ Panel {
                 verticalPadding: Style.space(5)
                 enabled: root.snapshotActionsReady()
                 tooltipText: "Close current windows, then restore this snapshot"
-                onClicked: {
-                  if (root.pendingReplaceName === modelData.name)
-                    root.runOperation("replace", modelData.name)
-                  else {
-                    root.pendingReplaceName = modelData.name
-                    root.pendingDeleteName = ""
-                    root.statusText = "Click Replace again to close current windows."
-                  }
-                }
+                onClicked: root.requestReplace(modelData.name)
               }
 
               Button {
+                objectName: "deleteButton-" + modelData.name
                 text: root.pendingDeleteName === modelData.name ? "Confirm" : "Delete"
                 foreground: root.pendingDeleteName === modelData.name ? root.urgent : root.dim
                 fontFamily: root.bar.fontFamily

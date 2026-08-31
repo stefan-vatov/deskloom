@@ -16,9 +16,31 @@ if (operation === 'cache-update') {
 if (operation === 'recover') { assert.deepEqual(argv, ['recover']); process.exit(0); }
 if (operation === 'list') {
   assert.deepEqual(argv, ['list']);
-  console.log('Saved sessions:\nfixture — 2 windows (2026-08-30)');
-  if (fs.existsSync(process.env.FIXTURE_STATE)) console.log('native-save — 2 windows (2026-08-30)');
-} else if (operation === 'save' && ['native-save', 'failure'].includes(name)) {
+  const deleted = new Set();
+  try {
+    for (const line of fs.readFileSync(process.env.FIXTURE_DESTRUCTIVE, 'utf8').split('\n')) {
+      const [op, nm] = line.trim().split(' ');
+      if (op === 'delete' && nm) deleted.add(nm);
+    }
+  } catch {}
+  console.log('Saved sessions:');
+  if (!deleted.has('fixture')) console.log('fixture — 2 windows (2026-08-30)');
+  if (fs.existsSync(process.env.FIXTURE_STATE)) {
+    const saved = JSON.parse(fs.readFileSync(process.env.FIXTURE_STATE, 'utf8')).name;
+    if (!deleted.has(saved)) console.log(saved + ' — 2 windows (2026-08-30)');
+  }
+  let destructive = 0;
+  try { destructive = fs.readFileSync(process.env.FIXTURE_DESTRUCTIVE, 'utf8').trim().split('\n').filter(Boolean).length; } catch {}
+  if (destructive > 0) console.log('destructive-' + destructive + ' — 0 windows (counter)');
+} else if (operation === 'replace' || operation === 'delete') {
+  assert.deepEqual(argv, operation === 'replace' ? ['replace', name, '--report-json'] : ['delete', name]);
+  fs.appendFileSync(process.env.FIXTURE_DESTRUCTIVE, operation + ' ' + name + '\n');
+  if (name === 'failure') {
+    console.error('Synthetic ' + operation + ' failure');
+    process.exit(1);
+  }
+  process.exit(0);
+} else if (operation === 'save' && ['native-save', 'failure', 'consent-save'].includes(name)) {
   assert.deepEqual(argv, ['save', name, '--force']);
   if (name === 'failure') {
     console.error('Synthetic save failure\n' + 'A detailed plain-text explanation <not markup>.\n'.repeat(24) + 'FINAL DIAGNOSTIC LINE');
