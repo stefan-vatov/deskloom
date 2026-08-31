@@ -128,3 +128,29 @@ test("a different session identity starts a fresh claim", t => {
   assert.equal(f.run({}, "0").status, 0);
   f.run({}, "0"); // suppress second run in the same session
 });
+
+test("a symlinked lock directory is rejected instead of followed", t => {
+  const f = sandbox(t);
+  const outside = path.join(f.root, "outside");
+  fs.mkdirSync(outside, { recursive: true });
+  fs.symlinkSync(outside, path.join(f.lockDir));
+  const before = f.snapshot ? null : null;
+
+  const result = f.run({}, "0");
+
+  assert.notEqual(result.status, 0, "a symlinked lock dir must fail closed");
+  assert.equal(fs.readdirSync(outside).length, 0, "no lock or claim may be created through the symlink");
+});
+
+test("a symlinked claim file is rejected instead of followed", t => {
+  const f = sandbox(t);
+  const outsideClaim = path.join(f.root, "outside-claim");
+  fs.mkdirSync(path.join(f.lockDir), { recursive: true });
+  fs.writeFileSync(outsideClaim, "attacker\nin-progress\n");
+  fs.symlinkSync(outsideClaim, f.claimPath);
+
+  const result = f.run({}, "0");
+
+  assert.notEqual(result.status, 0, "a symlinked claim must fail closed");
+  assert.equal(fs.readFileSync(outsideClaim, "utf8"), "attacker\nin-progress\n", "the claim target must stay untouched");
+});
