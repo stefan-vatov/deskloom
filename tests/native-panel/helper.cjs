@@ -28,7 +28,7 @@ if (operation === 'recover') {
   process.exit(0);
 }
 if (operation === 'list') {
-  assert.deepEqual(argv, ['list']);
+  assert.deepEqual(argv, ['list', '--json']);
   const deleted = new Set();
   try {
     for (const line of fs.readFileSync(process.env.FIXTURE_DESTRUCTIVE, 'utf8').split('\n')) {
@@ -36,15 +36,16 @@ if (operation === 'list') {
       if (op === 'delete' && nm) deleted.add(nm);
     }
   } catch {}
-  console.log('Saved sessions:');
-  if (!deleted.has('fixture')) console.log('fixture — 2 windows (2026-08-30)');
+  const sessions = [];
+  if (!deleted.has('fixture')) sessions.push({ name: 'fixture', windows: 2, created: '2026-08-30', automatic: false });
   if (fs.existsSync(process.env.FIXTURE_STATE)) {
     const saved = JSON.parse(fs.readFileSync(process.env.FIXTURE_STATE, 'utf8')).name;
-    if (!deleted.has(saved)) console.log(saved + ' — 2 windows (2026-08-30)');
+    if (!deleted.has(saved)) sessions.push({ name: saved, windows: 2, created: '2026-08-30', automatic: false });
   }
   let destructive = 0;
   try { destructive = fs.readFileSync(process.env.FIXTURE_DESTRUCTIVE, 'utf8').trim().split('\n').filter(Boolean).length; } catch {}
-  if (destructive > 0) console.log('destructive-' + destructive + ' — 0 windows (counter)');
+  if (destructive > 0) sessions.push({ name: 'destructive-' + destructive, windows: 0, created: 'counter', automatic: false });
+  process.stdout.write(JSON.stringify({ schema_version: 1, protocol: 'deskloom.inventory', sessions }));
 } else if (operation === 'replace' || operation === 'delete') {
   assert.deepEqual(argv, operation === 'replace' ? ['replace', name, '--report-json'] : ['delete', name]);
   fs.appendFileSync(process.env.FIXTURE_DESTRUCTIVE, operation + ' ' + name + '\n');

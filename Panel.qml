@@ -167,7 +167,7 @@ Panel {
     }
     refreshPending = false
     listTimedOut = false
-    listProcess.command = root.helperProcessCommand(["list"])
+    listProcess.command = root.helperProcessCommand(["list", "--json"])
     listProcess.running = true
     listTimeout.restart()
   }
@@ -501,28 +501,48 @@ Panel {
     operationTimeout.restart()
   }
 
-  function parseList(output) {
+  function parseInventory(output) {
+    // Consumes hyprloom's versioned machine inventory. Any structural
+    // problem rejects the whole response: the prior model and its selection
+    // survive, and the failure is visible instead of masquerading as an
+    // empty collection.
     var next = []
-    var text = String(output || "")
-    var lines = text.split("\n")
-    var rowPattern = /^\s*(.*?)\s+—\s+(\d+)\s+windows?\s+\(([^)]+)\)(.*)$/
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i]
-      var match = line.match(rowPattern)
-      if (!match) continue
-      next.push({
-        name: match[1].trim(),
-        windows: Number(match[2]),
-        created: match[3].trim(),
-        automatic: match[4].indexOf("[auto]") !== -1
-      })
+    var document = null
+    var ok = true
+    try { document = JSON.parse(String(output || "")) } catch (e) { ok = false }
+    if (ok && (document === null || typeof document !== "object"
+        || document.protocol !== "deskloom.inventory" || document.schema_version !== 1
+        || !Array.isArray(document.sessions))) ok = false
+    if (ok) {
+      for (var i = 0; i < document.sessions.length && ok; i++) {
+        var row = document.sessions[i]
+        if (row === null || typeof row !== "object" || typeof row.name !== "string" || row.name === ""
+          || typeof row.windows !== "number" || typeof row.created !== "string") { ok = false; break }
+        next.push({ name: row.name, windows: row.windows, created: row.created,
+          automatic: row.automatic === true,
+          revision: typeof row.revision === "string" ? row.revision : "" })
+      }
+    }
+    if (ok) {
+      for (var a = 0; a < next.length && ok; a++)
+        for (var b = a + 1; b < next.length; b++)
+          if (next[a].name === next[b].name
+            || (next[a].revision !== "" && next[a].revision === next[b].revision)) {
+            ok = false
+            root.statusText = "Snapshot list rejected: duplicate entries."
+          }
+    }
+    if (!ok) {
+      root.snapshotListFailed = true
+      root.snapshotsLoaded = true
+      if (!root.busy && root.statusText === "") root.statusText = "Could not parse the snapshot list."
+      return
     }
     snapshots = next
     root.snapshotsLoaded = true
     root.snapshotListFailed = false
-    var complete = text.indexOf("Saved sessions:") !== -1 || text.indexOf("No saved sessions.") !== -1
-    if (complete && root.defaultPreset !== ""
-        && !next.some(function(snapshot) { return snapshot.name === root.defaultPreset })) {
+    if (root.defaultPreset !== ""
+      && !next.some(function(snapshot) { return snapshot.name === root.defaultPreset })) {
       root.persistSettings({ defaultPreset: "" })
       if (!root.busy) root.statusText = "Default preset cleared because its snapshot no longer exists."
     }
@@ -955,7 +975,7 @@ Panel {
         return
       }
       if (exitCode === 0) {
-        root.parseList(listOutput.text)
+        root.parseInventory(listOutput.text)
       } else {
         root.snapshotListFailed = true
         var error = String(listError.text || "").trim()
