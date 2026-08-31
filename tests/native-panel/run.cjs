@@ -18,6 +18,7 @@ const { env, stage } = harness;
     await harness.run('fixture.qml');
     await harness.run('consent.qml');
     await harness.run('recovery.qml', { extraEnv: { FIXTURE_RECOVER_FAIL: '1' } });
+    await harness.run('launcher.qml');
     await harness.run('instances.qml', { extraEnv: { FIXTURE_BARRIER: path.join(stage, 'barrier') } });
 
     if (process.env.DESKLOOM_TEST_INSTALLED_HELPER === '1') {

@@ -19,6 +19,14 @@ Panel {
   property bool installerTimedOut: false
   property bool installerFinished: false
   property string installerAttemptId: ""
+  property bool installerLaunched: false
+  property string installerResultAttempt: ""
+  property int consentGeneration: 0
+
+  function logConsent(transition) {
+    consentGeneration += 1
+    console.log("consent generation " + consentGeneration + ": " + transition)
+  }
   property int installerPolls: 0
   property bool settingsOpen: false
   property string statusText: ""
@@ -324,7 +332,15 @@ Panel {
   }
 
   function openHelperInstaller() {
-    if (busy || helperInstalled) return
+    if (busy) {
+      console.log("installer launch rejected: an operation is already running")
+      return
+    }
+    if (helperInstalled) {
+      console.log("installer launch rejected: hyprloom is already installed")
+      return
+    }
+    installerLaunched = false
     installerTimedOut = false
     installerFinished = false
     installerAttemptId = String(Date.now())
@@ -356,11 +372,13 @@ Panel {
       "omarchy-launch-floating-terminal-with-presentation",
       installCommand
     ])
+    installerLaunched = true
     installPoll.start()
     installTimeout.start()
   }
 
   function checkInstallerResult() {
+    if (!root.installerLaunched) return
     if (!root.installingHelper || installerResultProbe.running) return
     installerResultProbe.command = [
       "bash", "-c",
@@ -374,10 +392,12 @@ Panel {
         + "if [ -f \"$result_file\" ]; then cat \"$result_file\"; fi",
       "deskloom", installerAttemptId
     ]
+    installerResultAttempt = installerAttemptId
     installerResultProbe.running = true
   }
 
   function checkInstallerLock() {
+    if (!root.installerLaunched) return
     if (installerLockProbe.running) return
     installerLockProbe.command = [
       "bash", "-c",
@@ -427,6 +447,7 @@ Panel {
     // both tokens here, at the accepted launch boundary, means a failed,
     // timed-out, recovered, or intervening attempt can never be re-fired by
     // a stale token after a view reopen.
+    if (kind === "replace" || kind === "delete") logConsent("consumed-" + kind)
     pendingDeleteName = ""
     pendingReplaceName = ""
 
@@ -519,6 +540,7 @@ Panel {
       root.pendingDeleteName = target
       root.pendingReplaceName = ""
       root.statusText = "Click Confirm to delete '" + target + "'."
+      logConsent("armed-delete")
       return
     }
 
@@ -545,6 +567,7 @@ Panel {
       root.pendingReplaceName = target
       root.pendingDeleteName = ""
       root.statusText = "Click Replace again to close current windows."
+      logConsent("armed-replace")
       return
     }
 
@@ -585,6 +608,7 @@ Panel {
     interval: 1000
     repeat: true
     onTriggered: {
+      if (!root.installerLaunched) return
       root.checkHelper()
       if (root.installingHelper) {
         root.installerPolls += 1
@@ -602,6 +626,10 @@ Panel {
     }
     onExited: function() {
       if (!root.installingHelper) return
+      if (root.installerResultAttempt !== root.installerAttemptId) {
+        console.log("installer result dropped as stale: verdict belongs to a superseded attempt")
+        return
+      }
       var result = String(installerResultOutput.text || "").trim()
       if (result === "failure") {
         root.installerFinished = true
@@ -610,10 +638,12 @@ Panel {
         root.statusText = "Installation failed. Try again."
         installPoll.stop()
         installTimeout.stop()
+        console.log("installer status: " + root.statusText)
       } else if (result === "success") {
         root.installerFinished = true
         root.installerTimedOut = false
         root.statusText = "Installer finished; checking hyprloom…"
+        console.log("installer status: " + root.statusText + " (result " + result + ")")
         root.checkHelper()
       }
     }
@@ -626,6 +656,7 @@ Panel {
       waitForEnd: true
     }
     onExited: function() {
+      if (!root.installerLaunched) return
       if (!root.installingHelper || root.installerPolls < 5) return
       if (String(installerLockOutput.text || "").trim() === "free") {
         root.installingHelper = false
@@ -633,6 +664,7 @@ Panel {
         root.statusText = "Installer stopped before hyprloom was ready. Try again."
         installPoll.stop()
         installTimeout.stop()
+        console.log("installer lock free detected: " + root.statusText)
       }
     }
   }
@@ -648,6 +680,7 @@ Panel {
       root.installerTimedOut = true
       root.busy = true
       root.statusText = "Installation is still running…"
+      console.log("installer timed out: switching to lock-only observation")
       root.checkInstallerLock()
     }
   }
@@ -736,6 +769,7 @@ Panel {
           root.installerTimedOut = false
           root.busy = false
           root.statusText = "hyprloom is ready."
+          console.log("installer status: " + root.statusText)
           installPoll.stop()
           installTimeout.stop()
         }
@@ -746,6 +780,7 @@ Panel {
           root.installingHelper = false
           root.busy = false
           root.statusText = "Installer finished but hyprloom is not available. Try again."
+          console.log("installer status: " + root.statusText)
           installPoll.stop()
           installTimeout.stop()
         } else if (!root.installingHelper && !root.busy) {
