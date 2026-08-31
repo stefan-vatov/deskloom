@@ -27,16 +27,32 @@ function fixture(t) {
   const fakeOmarchy = `#!${process.execPath}
 const fs = require("node:fs");
 fs.appendFileSync(process.env.TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
+const args = process.argv.slice(2).join(" ");
+if (process.env.TEST_OMARCHY_FAIL_SUBSTR && args.includes(process.env.TEST_OMARCHY_FAIL_SUBSTR)) process.exit(1);
 if (process.argv[2] === "plugin" && process.argv[3] === "list") {
-  process.stdout.write(process.env.TEST_PLUGIN_LIST ?? '[{"id":"thethracian.deskloom","enabled":true}]');
+  let count = 0;
+  try { count = parseInt(fs.readFileSync(process.env.TEST_LIST_COUNT, "utf8").trim() || "0", 10); } catch {}
+  count += 1;
+  try { fs.writeFileSync(process.env.TEST_LIST_COUNT, String(count)); } catch {}
+  let registered = true;
+  try { registered = fs.readFileSync(process.env.TEST_REGISTRY, "utf8").trim() === "registered"; } catch {}
+  const empty = process.env.TEST_LIST_EMPTY_FIRST_N && count <= parseInt(process.env.TEST_LIST_EMPTY_FIRST_N, 10);
+  if (empty || !registered) {
+    process.stdout.write("[]");
+  } else {
+    process.stdout.write(process.env.TEST_PLUGIN_LIST ?? '[{"id":"thethracian.deskloom","enabled":true}]');
+  }
 }
 process.exit(process.env.TEST_OMARCHY_FAIL === "1" ? 1 : 0);
 `;
   const fakeShell = `#!${process.execPath}
 const fs = require("node:fs");
 fs.appendFileSync(process.env.TEST_CALLS, JSON.stringify(["omarchy-shell", ...process.argv.slice(2)]) + "\\n");
-if (process.env.TEST_KILL_AT_RESCAN === "1" && process.argv.includes("rescanPlugins")) {
-  process.kill(process.ppid, "SIGKILL");
+if (process.argv.includes("rescanPlugins")) {
+  if (process.env.TEST_KILL_AT_RESCAN === "1") process.kill(process.ppid, "SIGKILL");
+  if (process.env.TEST_FAIL_RESCAN === "1") process.exit(1);
+  const targetExists = fs.existsSync(process.env.TEST_TARGET_DIR);
+  fs.writeFileSync(process.env.TEST_REGISTRY, targetExists ? "registered\\n" : "unregistered\\n");
 }
 process.exit(0);
 `;
@@ -46,6 +62,8 @@ process.exit(0);
   const backupRoot = path.join(configRoot, "omarchy", ".deskloom-rollback");
   const marker = path.join(backupRoot, "transaction");
   const target = path.join(configRoot, "omarchy", "plugins", "thethracian.deskloom");
+  const registry = path.join(root, "registry");
+  fs.writeFileSync(registry, "registered\n");
 
   function writeTree(base, files) {
     for (const [name, content] of Object.entries(files)) {
@@ -104,13 +122,16 @@ process.exit(0);
         XDG_STATE_HOME: stateDir,
         XDG_RUNTIME_DIR: runDir,
         TEST_CALLS: calls,
+        TEST_REGISTRY: registry,
+        TEST_TARGET_DIR: target,
+        TEST_LIST_COUNT: "/run/list-count",
         ...extra,
       },
       encoding: "utf8", timeout: 60000,
     });
   }
 
-  return { root, backupRoot, marker, target, seedMarker, seedTarget, seedBackup, snapshot, readCalls, run };
+  return { root, backupRoot, marker, target, registry, seedMarker, seedTarget, seedBackup, snapshot, readCalls, run };
 }
 
 test("recovery refuses to delete the restored prior plugin when a named backup is missing", t => {
@@ -137,7 +158,7 @@ test("recovery refuses to delete the restored prior plugin when a named backup i
 // exactly what recovery did. The sentinel payload is unique to the prior
 // install, so its presence proves which copy the target holds.
 function abortedRun(f, extra = {}) {
-  const result = f.run({ TEST_OMARCHY_FAIL: "1", ...extra });
+  const result = f.run({ TEST_OMARCHY_FAIL_SUBSTR: "validate", ...extra });
   assert.notEqual(result.status, 0, result.stderr);
   return result;
 }
@@ -251,22 +272,20 @@ test("recovery restores a committed backup when the target is missing", t => {
   assert.ok(f.readCalls().some(call => call.includes("rescanPlugins")));
 });
 
-for (const phase of ["rollback-registry-pending", "phase-from-the-future"]) {
-  test(`recovery refuses an unrecognized future phase (${phase}) without mutating anything`, t => {
-    const f = fixture(t);
-    f.seedMarker(phase, "deskloom.old.77");
-    f.seedTarget();
-    const markerBefore = fs.readFileSync(f.marker);
-    const targetBefore = f.snapshot(f.target);
+test("recovery refuses an unrecognized future phase without mutating anything", t => {
+  const f = fixture(t);
+  f.seedMarker("phase-from-the-future", "deskloom.old.77");
+  f.seedTarget();
+  const markerBefore = fs.readFileSync(f.marker);
+  const targetBefore = f.snapshot(f.target);
 
-    const result = f.run();
+  const result = f.run();
 
-    assert.notEqual(result.status, 0, result.stderr);
-    assert.deepEqual(f.snapshot(f.target), targetBefore);
-    assert.deepEqual(fs.readFileSync(f.marker), markerBefore);
-    assert.deepEqual(f.readCalls(), []);
-  });
-}
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.deepEqual(f.snapshot(f.target), targetBefore);
+  assert.deepEqual(fs.readFileSync(f.marker), markerBefore);
+  assert.deepEqual(f.readCalls(), []);
+});
 
 for (const [name, markerText] of [
   ["unsafe backup name", "installed\n../escape\ntrue\n"],
@@ -290,7 +309,7 @@ for (const [name, markerText] of [
   });
 }
 
-test("a hard kill during recovery rescan converges to a safe refusal on later runs", t => {
+test("a hard kill after the durable rollback phase converges on the next run", t => {
   const f = fixture(t);
   f.seedMarker("installed", "deskloom.old.77");
   f.seedTarget({ "Panel.qml": "new build\n" });
@@ -300,17 +319,13 @@ test("a hard kill during recovery rescan converges to a safe refusal on later ru
   assert.notEqual(killed.status, 0);
   assert.equal(fs.readFileSync(path.join(f.target, "UNIQUE_OLD.txt"), "utf8"), OLD_SENTINEL);
   assert.equal(fs.existsSync(path.join(f.backupRoot, "deskloom.old.77")), false);
-  assert.equal(fs.existsSync(f.marker), true, "marker survives the kill");
-  const markerAfterKill = fs.readFileSync(f.marker);
-  const targetAfterKill = f.snapshot(f.target);
+  assert.equal(fs.existsSync(f.marker), true, "durable phase marker survives the kill");
+  assert.match(fs.readFileSync(f.marker, "utf8"), /^rollback-registry-pending\n/);
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const refused = f.run();
-    assert.notEqual(refused.status, 0, refused.stderr);
-    assert.match(refused.stderr, /backup/i);
-    assert.deepEqual(f.snapshot(f.target), targetAfterKill);
-    assert.deepEqual(fs.readFileSync(f.marker), markerAfterKill);
-  }
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(f.marker), false);
+  assert.ok(fs.existsSync(path.join(f.target, "manifest.json")));
 });
 
 test("a hard kill during first-install recovery converges to a clean reinstall", t => {
@@ -326,5 +341,115 @@ test("a hard kill during first-install recovery converges to a clean reinstall",
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.existsSync(f.marker), false);
+  assert.ok(fs.existsSync(path.join(f.target, "manifest.json")));
+});
+
+test("rollback-registry-pending reconciles the registry without touching the restored payload", t => {
+  const f = fixture(t);
+  f.seedMarker("rollback-registry-pending", "deskloom.old.77");
+  f.seedTarget();
+
+  const result = f.run({ TEST_OMARCHY_FAIL_SUBSTR: "validate" });
+
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.equal(fs.readFileSync(path.join(f.target, "UNIQUE_OLD.txt"), "utf8"), OLD_SENTINEL);
+  assert.equal(fs.existsSync(f.marker), false, "marker is consumed only after the registry converges");
+  assert.equal(fs.readdirSync(f.backupRoot).filter(name => name.startsWith("deskloom.old.")).length, 0);
+  assert.ok(f.readCalls().some(call => call.includes("rescanPlugins")));
+  assert.ok(f.readCalls().some(call => call[0] === "plugin" && call[1] === "enable"));
+});
+
+test("rollback-registry-pending for a first install verifies the plugin is absent", t => {
+  const f = fixture(t);
+  f.seedMarker("rollback-registry-pending", "none", "unknown");
+  const result = f.run({ TEST_OMARCHY_FAIL_SUBSTR: "validate", TEST_PLUGIN_LIST: "[]" });
+
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(f.target), false);
+  assert.equal(fs.existsSync(f.marker), false);
+  assert.ok(f.readCalls().some(call => call.includes("rescanPlugins")));
+  assert.ok(!f.readCalls().some(call => call[0] === "plugin" && ["enable", "disable"].includes(call[1])));
+});
+
+test("rollback-registry-pending restores a disabled prior state", t => {
+  const f = fixture(t);
+  f.seedMarker("rollback-registry-pending", "deskloom.old.77", "false");
+  f.seedTarget();
+
+  const result = f.run({
+    TEST_OMARCHY_FAIL_SUBSTR: "validate",
+    TEST_PLUGIN_LIST: '[{"id":"thethracian.deskloom","enabled":false}]',
+  });
+
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.equal(fs.readFileSync(path.join(f.target, "UNIQUE_OLD.txt"), "utf8"), OLD_SENTINEL);
+  assert.equal(fs.existsSync(f.marker), false);
+  assert.ok(f.readCalls().some(call => call[0] === "plugin" && call[1] === "disable"));
+});
+
+test("a failing rescan retains the rollback marker until reconciliation converges", t => {
+  const f = fixture(t);
+  f.seedMarker("rollback-registry-pending", "deskloom.old.77");
+  f.seedTarget();
+  const markerBefore = fs.readFileSync(f.marker);
+  const targetBefore = f.snapshot(f.target);
+
+  const failed = f.run({ TEST_FAIL_RESCAN: "1" });
+  assert.notEqual(failed.status, 0, failed.stderr);
+  assert.match(failed.stderr, /marker/i);
+  assert.deepEqual(fs.readFileSync(f.marker), markerBefore);
+  assert.deepEqual(f.snapshot(f.target), targetBefore);
+
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(f.marker), false);
+  assert.ok(fs.existsSync(path.join(f.target, "manifest.json")));
+});
+
+test("a failing registry listing retains the rollback marker until it converges", t => {
+  const f = fixture(t);
+  f.seedMarker("rollback-registry-pending", "deskloom.old.77");
+  f.seedTarget();
+  const markerBefore = fs.readFileSync(f.marker);
+
+  const failed = f.run({ TEST_LIST_EMPTY_FIRST_N: "999" });
+  assert.notEqual(failed.status, 0, failed.stderr);
+  assert.deepEqual(fs.readFileSync(f.marker), markerBefore);
+  assert.equal(fs.readFileSync(path.join(f.target, "UNIQUE_OLD.txt"), "utf8"), OLD_SENTINEL);
+
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(f.marker), false);
+});
+
+test("rollback-registry-pending with a remaining backup refuses without mutating anything", t => {
+  const f = fixture(t);
+  f.seedMarker("rollback-registry-pending", "deskloom.old.77");
+  f.seedTarget();
+  f.seedBackup();
+  const markerBefore = fs.readFileSync(f.marker);
+  const targetBefore = f.snapshot(f.target);
+
+  const result = f.run();
+
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.deepEqual(f.snapshot(f.target), targetBefore);
+  assert.deepEqual(fs.readFileSync(f.marker), markerBefore);
+  assert.equal(fs.existsSync(path.join(f.backupRoot, "deskloom.old.77")), true);
+  assert.deepEqual(f.readCalls(), []);
+});
+
+test("a failed registration rolls back and durably records the pending registry state", t => {
+  const f = fixture(t);
+  f.seedTarget();
+
+  const failed = f.run({ TEST_LIST_EMPTY_FIRST_N: "41" });
+  assert.notEqual(failed.status, 0, failed.stderr);
+  assert.equal(fs.readFileSync(path.join(f.target, "UNIQUE_OLD.txt"), "utf8"), OLD_SENTINEL);
+  assert.equal(fs.existsSync(f.marker), false, "registry reconciliation completed inside the failing run");
+  assert.equal(fs.readdirSync(f.backupRoot).filter(name => name.startsWith("deskloom.old.")).length, 0);
+
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
   assert.ok(fs.existsSync(path.join(f.target, "manifest.json")));
 });

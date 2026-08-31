@@ -56,7 +56,11 @@ node tests/native-panel/run.cjs
 The local installer tests seed interrupted transaction states (marker phase,
 backup, target payloads) and assert the recovery decision table: a missing
 named backup is refused without deleting the restored prior plugin, and only a
-proven first-install marker removes an installed target.
+proven first-install marker removes an installed target. A rollback that has
+restored the payload but not yet reconciled the plugin registry is recorded in
+a durable rollback-registry-pending phase; recovery resumes it without
+renaming or deleting payload files, and the marker is consumed only after the
+recorded enabled/absent state is verified.
 
 Reporting tests also require Qt's `qmltestrunner`; native tests require the
 installed Omarchy QML components and Quickshell. See the

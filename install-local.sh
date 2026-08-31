@@ -101,10 +101,10 @@ write_transaction_marker() {
 restore_plugin_enabled_state() {
   case "$1" in
     true)
-      omarchy plugin enable thethracian.deskloom --after omarchy.tray >/dev/null 2>&1 || true
+      omarchy plugin enable thethracian.deskloom --after omarchy.tray >/dev/null 2>&1 || return 1
       ;;
     false)
-      omarchy plugin disable thethracian.deskloom >/dev/null 2>&1 || true
+      omarchy plugin disable thethracian.deskloom >/dev/null 2>&1 || return 1
       ;;
     unknown)
       ;;
@@ -113,6 +113,65 @@ restore_plugin_enabled_state() {
       return 1
       ;;
   esac
+}
+
+rollback_expectation() {
+  # $1: recorded prior enabled state, $2: backup name. A first install (no
+  # backup) must end with the plugin absent from the registry; anything else
+  # converges to the recorded prior enabled state, or to plain visibility
+  # when the prior state is unknown.
+  if [ "$2" = none ]; then
+    echo absent
+    return 0
+  fi
+  case "$1" in
+    true) echo enabled ;;
+    false) echo disabled ;;
+    *) echo present ;;
+  esac
+}
+
+registry_matches() {
+  local plugin_state_json
+  plugin_state_json=$(omarchy plugin list --json) || return 1
+  case "$1" in
+    enabled)
+      jq -e 'any(.[]; .id == "thethracian.deskloom" and .enabled == true)' >/dev/null <<< "$plugin_state_json"
+      ;;
+    disabled)
+      jq -e 'any(.[]; .id == "thethracian.deskloom" and .enabled == false)' >/dev/null <<< "$plugin_state_json"
+      ;;
+    present)
+      jq -e 'any(.[]; .id == "thethracian.deskloom")' >/dev/null <<< "$plugin_state_json"
+      ;;
+    absent)
+      jq -e 'all(.[]; .id != "thethracian.deskloom")' >/dev/null <<< "$plugin_state_json"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+perform_registry_rollback() {
+  # One checked reconciliation routine shared by restart recovery, the EXIT
+  # cleanup, and rollback-registry-pending re-entry. The caller must already
+  # have durably recorded the rollback-registry-pending phase; this routine
+  # either converges the registry or fails with the marker retained.
+  local expectation="$1"
+  local max_attempts=20
+  local attempt
+  for attempt in $(seq 1 "$max_attempts"); do
+    if omarchy-shell shell rescanPlugins >/dev/null 2>&1 \
+      && restore_plugin_enabled_state "${previous_enabled:-unknown}" \
+      && registry_matches "$expectation"; then
+      echo "Deskloom install recovery: registry rollback converged attempt=$attempt expectation=$expectation" >&2
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "Deskloom install recovery: registry rollback did not converge within $max_attempts attempts; expectation=$expectation. The transaction marker is kept; resolve the plugin registry manually, then remove the marker ($transaction_marker)." >&2
+  return 1
 }
 
 recover_install_transaction() {
@@ -173,7 +232,7 @@ recover_install_transaction() {
     ensure_safe_dir "$target_dir"
   fi
   case "$phase" in
-    prepared|backed-up|installed|committed) ;;
+    prepared|backed-up|installed|committed|rollback-registry-pending) ;;
     *)
       echo "Refusing to recover Deskloom: transaction marker has an unknown phase." >&2
       return 1
@@ -229,6 +288,23 @@ recover_install_transaction() {
     return 1
   fi
 
+  if [ "$phase" = rollback-registry-pending ]; then
+    # The prior payload was already restored durably by an earlier run.  This
+    # phase must never rename or delete payload files: only reconcile the
+    # registry and consume the marker once the recorded state holds.
+    if [ "$backup_presence" = present ]; then
+      echo "Refusing to recover Deskloom: rollback-registry-pending marker still names a backup, so the transaction state is ambiguous. Resolve manually, then remove the transaction marker ($transaction_marker)." >&2
+      return 1
+    fi
+    echo "Deskloom install recovery: resuming pending registry rollback expectation=$(rollback_expectation "$previous_enabled" "$backup_name")" >&2
+    if ! perform_registry_rollback "$(rollback_expectation "$previous_enabled" "$backup_name")"; then
+      return 1
+    fi
+    rm -f -- "$transaction_marker"
+    sync_path "$backup_root"
+    return 0
+  fi
+
   case "$phase" in
     prepared|backed-up|installed)
       registry_dirty=false
@@ -249,8 +325,12 @@ recover_install_transaction() {
           ;;
       esac
       if [ "$registry_dirty" = true ]; then
-        omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
-        restore_plugin_enabled_state "$previous_enabled"
+        # Record the payload-restored state before touching the registry so a
+        # crash here leaves a restartable, non-destructive transaction.
+        write_transaction_marker rollback-registry-pending "$backup_name" "$previous_enabled"
+        if ! perform_registry_rollback "$(rollback_expectation "$previous_enabled" "$backup_name")"; then
+          return 1
+        fi
       fi
       ;;
     committed)
@@ -261,9 +341,12 @@ recover_install_transaction() {
           ;;
         restore-backup)
           mv -- "$backup_path" "$target_dir"
-          omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
           sync_path "$backup_root"
           sync_path "$target_parent"
+          write_transaction_marker rollback-registry-pending "$backup_name" "$previous_enabled"
+          if ! perform_registry_rollback "$(rollback_expectation "$previous_enabled" "$backup_name")"; then
+            return 1
+          fi
           ;;
       esac
       ;;
@@ -309,11 +392,16 @@ cleanup() {
   if [ "$status" -ne 0 ] && [ "$transaction_committed" = false ] \
     && [ "$registry_dirty" = true ]; then
     # Restore the shell's plugin registry and enabled state when a
-    # post-replacement check fails.
-    omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
-    restore_plugin_enabled_state "$previous_enabled"
-  fi
-  if [ "$status" -ne 0 ] && [ "$transaction_committed" = false ] \
+    # post-replacement check fails.  The pending phase is recorded first so a
+    # crash or a wedged shell here stays restartable and non-destructive.
+    write_transaction_marker rollback-registry-pending "${backup_name:-none}" "$previous_enabled"
+    if ! perform_registry_rollback "$(rollback_expectation "${previous_enabled:-unknown}" "${backup_name:-none}")"; then
+      echo "Deskloom installation was rolled back on disk but the plugin registry could not be reconciled; the transaction marker was kept for the next run." >&2
+    else
+      rm -f -- "$transaction_marker"
+      sync_path "$backup_root"
+    fi
+  elif [ "$status" -ne 0 ] && [ "$transaction_committed" = false ] \
     && { [ -e "$transaction_marker" ] || [ -L "$transaction_marker" ]; }; then
     rm -f -- "$transaction_marker"
     sync_path "$backup_root"
@@ -321,6 +409,8 @@ cleanup() {
   return "$status"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 runtime_files=(Panel.qml RestoreReport.js RestoreReportView.qml RestoreReportPopup.qml)
 # A long-running QML engine may cache components by URL even after a registry
