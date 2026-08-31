@@ -460,6 +460,10 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 runtime_entry=$("$source_dir/package-plugin.sh" "$source_dir" "$staging_dir")
+# Compile the complete staged panel before anything touches the live plugin;
+# a nonzero gate exit aborts here with the gate's diagnostic as the last
+# stderr line (canon: installation-safety).
+"$source_dir/compile-gate.sh" "$staging_dir"
 omarchy plugin validate "$staging_dir"
 
 plugin_state_json=$(omarchy plugin list --json)

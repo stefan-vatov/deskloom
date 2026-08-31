@@ -20,7 +20,7 @@ const OLD_SENTINEL = "prior plugin payload unique to the previous install\n";
 function seedCheckout(dir) {
   fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
   for (const name of [
-    "install-local.sh", "install-helper.sh", "package-plugin.sh", "manifest.json", "README.md",
+    "install-local.sh", "install-helper.sh", "package-plugin.sh", "compile-gate.sh", "manifest.json", "README.md",
     "Panel.qml", "RestoreReport.js", "RestoreReportView.qml", "RestoreReportPopup.qml",
   ]) {
     fs.copyFileSync(path.join(project, name), path.join(dir, name));
@@ -37,7 +37,9 @@ function fixture(t) {
   const stateDir = path.join(root, "state");
   const runDir = path.join(root, "run");
   const bin = path.join(root, "bin");
+  const tmpRoot = path.join(root, "tmp");
   fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(tmpRoot, { recursive: true });
   fs.mkdirSync(home, { recursive: true });
   const calls = path.join(root, "omarchy.jsonl");
 
@@ -129,7 +131,11 @@ process.exit(0);
   function run(extra = {}, scriptPath = installer) {
     return spawnSync("/usr/bin/bwrap", [
       "--unshare-all", "--die-with-parent", "--new-session",
-      "--ro-bind", "/", "/", "--bind", root, root,
+      // /tmp is replaced first so it cannot mask the fixture root (which
+      // mkdtemp places under the host /tmp); the root bind re-exposes it.
+      // The sandbox needs a writable /tmp so the compile gate can build its
+      // probe directory under /tmp/$UID.
+      "--ro-bind", "/", "/", "--bind", tmpRoot, "/tmp", "--bind", root, root,
       "--tmpfs", "/run", "--proc", "/proc", "--dev", "/dev",
       "/bin/bash", scriptPath,
     ], {
