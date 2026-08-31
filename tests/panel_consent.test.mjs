@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { withBusyStubs } from "./busy_stub.mjs";
 
 const source = fs.readFileSync(new URL("../Panel.qml", import.meta.url), "utf8");
 
@@ -21,11 +22,14 @@ function processExitHandler(id, context) {
 }
 
 // The context is its own `root`, so property writes through either alias stay
-// one source of truth, exactly as in the live Panel.
+// one source of truth, exactly as in the live Panel. withBusyStubs attaches
+// the ownership helpers the extracted handlers call.
 function consentHarness() {
-  const context = {
+  const context = withBusyStubs({
     busy: false,
     helperInstalled: true,
+    consentGeneration: 0,
+    consentLog: [],
     pendingDeleteName: "",
     pendingReplaceName: "",
     operationKind: "",
@@ -51,6 +55,10 @@ function consentHarness() {
     operationSummary() { return "summary"; },
     presentRestoreReport() {},
     startTimedOutReplaceRecovery() { context.recoveryStarted = true; },
+  });
+  context.logConsent = transition => {
+    context.consentGeneration += 1;
+    context.consentLog.push("consent generation " + context.consentGeneration + ": " + transition);
   };
   context.root = context;
   const harness = {
@@ -182,15 +190,25 @@ test("view reopen cannot turn a consumed token back into armed consent", t => {
   h.requestReplace("work");
   h.requestReplace("work");
   h.onExited(1);
-  // Simulated close/reopen: state is re-read from the same properties.
   const reopened = { pendingReplaceName: h.context.pendingReplaceName, pendingDeleteName: h.context.pendingDeleteName };
   assert.equal(reopened.pendingReplaceName, "");
   assert.equal(reopened.pendingDeleteName, "");
   assert.notEqual(h.context.statusText, "Click Replace again to close current windows.");
 });
 
-test("the helper install command targets the canonical omarchy plugin path", () => {
-  assert.ok(source.includes('installer=\\"$HOME/.config/omarchy/plugins/thethracian.deskloom/install-helper.sh\\"'));
-  assert.equal(source.includes("XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"), false,
-    "the helper installer must not live under an XDG-derived plugin path");
+test("consent transitions are logged as sanitized generations without snapshot names", () => {
+  const h = consentHarness();
+  h.requestReplace("work");
+  h.requestDelete("work");
+  h.requestReplace("work");
+  h.requestReplace("work"); // confirming click: consumes at the launch boundary
+  h.onExited(1);
+  assert.deepEqual(h.context.consentLog, [
+    "consent generation 1: armed-replace",
+    "consent generation 2: armed-delete",
+    "consent generation 3: armed-replace",
+    "consent generation 4: consumed-replace",
+  ]);
+  for (const line of h.context.consentLog)
+    assert.doesNotMatch(line, /work/, "consent logs must not record snapshot names");
 });

@@ -15,6 +15,7 @@ Panel {
 
   property bool helperInstalled: false
   property bool busy: false
+  property string busyOwner: ""
   property bool installingHelper: false
   property bool installerTimedOut: false
   property bool installerFinished: false
@@ -171,11 +172,27 @@ Panel {
     listTimeout.restart()
   }
 
+  function acquireBusy(owner) {
+    busyOwner = owner
+    busy = true
+  }
+
+  function releaseBusy(owner) {
+    // Only the owning workflow may release the shared busy flag; an empty
+    // owner is legacy/unowned and releases unconditionally.
+    if (busyOwner === owner || !busyOwner) {
+      busyOwner = ""
+      busy = false
+    }
+  }
+
   function snapshotActionsReady() {
     return root.helperInstalled
       && !root.busy
       && !listProcess.running
       && !startupRecoveryProcess.running
+      && !bootRestoreProcess.running
+      && !bootHelperProbe.running
   }
 
   function startStartupRecovery() {
@@ -183,7 +200,7 @@ Panel {
       return
     root.startupRecoveryAttempted = true
     root.startupRecoveryTimedOut = false
-    root.busy = true
+    acquireBusy("startup-recovery")
     root.statusText = "Checking for interrupted replacement…"
     startupRecoveryProcess.command = root.helperProcessCommand(["recover"])
     startupRecoveryProcess.running = true
@@ -237,6 +254,11 @@ Panel {
 
   function restoreDefaultAtBoot() {
     if (bootRestoreAttempted) return
+    if (busy || installingHelper || operationProcess.running || recoveryProcess.running) {
+      bootRestoreAttempted = true
+      statusText = "Automatic restore skipped: the panel is busy."
+      return
+    }
     if (!bootSettingsReady) {
       // The bar injects widget settings after the QML component is created.
       // Give that hand-off a bounded grace period, then use the manifest
@@ -267,7 +289,7 @@ Panel {
 
     bootRestorePreset = root.defaultPreset
     bootRestoreRetries = 0
-    busy = true
+    acquireBusy("boot-restore")
     statusText = "Restoring default preset…"
     bootHelperProbe.running = true
   }
@@ -346,7 +368,7 @@ Panel {
     installerAttemptId = String(Date.now())
     installerPolls = 0
     installingHelper = true
-    busy = true
+    acquireBusy("installer")
     statusText = "Opening the installer terminal…"
     var installCommand = "bash -c 'set -eu; umask 077; "
       + "lock_root=\"${XDG_RUNTIME_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}}\"; "
@@ -454,7 +476,7 @@ Panel {
     operationKind = kind
     operationName = operationArgument
     operationTimedOut = false
-    busy = true
+    acquireBusy("operation")
     statusText = "Working…"
 
     if (kind === "save") {
@@ -584,6 +606,7 @@ Panel {
   }
 
   function startTimedOutReplaceRecovery() {
+    busyOwner = "recovery"
     root.recoveryTimedOut = false
     recoveryProcess.command = root.helperProcessCommand(["recover"])
     recoveryProcess.running = true
@@ -767,7 +790,7 @@ Panel {
         if (root.installingHelper) {
           root.installingHelper = false
           root.installerTimedOut = false
-          root.busy = false
+          releaseBusy("installer")
           root.statusText = "hyprloom is ready."
           console.log("installer status: " + root.statusText)
           installPoll.stop()
@@ -778,7 +801,7 @@ Panel {
         root.snapshots = []
         if (root.installingHelper && root.installerFinished) {
           root.installingHelper = false
-          root.busy = false
+          releaseBusy("installer")
           root.statusText = "Installer finished but hyprloom is not available. Try again."
           console.log("installer status: " + root.statusText)
           installPoll.stop()
@@ -798,8 +821,10 @@ Panel {
     ]
     onExited: function(exitCode) {
       if (exitCode !== 0) {
-        root.busy = false
-        root.statusText = "Default preset skipped: hyprloom is not installed."
+        if (busyOwner === "boot-restore") {
+          releaseBusy("boot-restore")
+          statusText = "Default preset skipped: hyprloom is not installed."
+        }
         return
       }
       root.helperInstalled = true
@@ -827,7 +852,7 @@ Panel {
       startupRecoveryTimeout.stop()
       var timedOut = root.startupRecoveryTimedOut
       root.startupRecoveryTimedOut = false
-      root.busy = false
+      releaseBusy("startup-recovery")
 
       if (timedOut) {
         root.statusText = "Startup recovery timed out; continuing carefully."
@@ -858,7 +883,7 @@ Panel {
       bootRestoreTimeout.stop()
       if (root.bootRestoreTimedOut) {
         root.bootRestoreTimedOut = false
-        root.busy = false
+        releaseBusy("boot-restore")
         root.statusText = "Default preset restore stopped after timing out."
         root.presentRestoreReport("", root.statusText, 1, root.bootRestorePreset, true)
         return
@@ -872,11 +897,14 @@ Panel {
           bootRestoreRetryTimer.interval = 1000 * root.bootRestoreRetries
           bootRestoreRetryTimer.restart()
         } else {
-          root.statusText = "Automatic restore skipped: startup lock was busy."
+          releaseBusy("boot-restore")
+        root.statusText = "Automatic restore skipped: startup lock was busy."
         }
       } else if (exitCode === 76) {
+        releaseBusy("boot-restore")
         root.statusText = "Default preset already restored this session."
       } else if (exitCode === 0) {
+        releaseBusy("boot-restore")
         root.presentRestoreReport(bootRestoreOutput.text, bootRestoreError.text, exitCode, root.bootRestorePreset, false)
         root.refreshList()
       } else {
@@ -961,7 +989,7 @@ Panel {
       }
       if (root.operationTimedOut) {
         root.operationTimedOut = false
-        root.busy = false
+        releaseBusy("operation")
         root.statusText = "Operation stopped after timing out. Try again."
         if (completedKind === "restore")
           root.presentRestoreReport("", root.statusText, 1, completedName, true)
@@ -972,7 +1000,7 @@ Panel {
         root.refreshList()
         return
       }
-      root.busy = false
+      releaseBusy("operation")
       var isRestore = completedKind === "restore" || completedKind === "replace"
       if (isRestore)
         root.presentRestoreReport(operationOutput.text, operationError.text, exitCode, completedName, false)
@@ -1028,7 +1056,7 @@ Panel {
       var timedOut = root.recoveryTimedOut
       root.recoveryTimedOut = false
       root.recoveryRunning = false
-      root.busy = false
+      releaseBusy("recovery")
 
       if (timedOut) {
         root.statusText = "Desktop recovery timed out; try Restore again."

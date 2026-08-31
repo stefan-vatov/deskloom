@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { withBusyStubs } from "./busy_stub.mjs";
 
 const source = fs.readFileSync(new URL("../Panel.qml", import.meta.url), "utf8");
 
@@ -15,7 +16,7 @@ function processExitHandler(id, context) {
 
 function startupHarness(extra = {}) {
   const context = {
-    startupRecoveryTimedOut: false,
+
     startupRecoveryTimeout: { stop() {} },
     startupRecoveryError: { text: "" },
     busy: false,
@@ -26,13 +27,18 @@ function startupHarness(extra = {}) {
     root: null,
     ...extra,
   };
+    context.busyOwner = "";
+  context.acquireBusy = o => { context.busyOwner = o; context.busy = true; };
+  context.releaseBusy = o => { if (context.busyOwner === o || !context.busyOwner) { context.busyOwner = ""; context.busy = false; } };
   context.root = context;
-  return { context, onExited: processExitHandler("startupRecoveryProcess", context) };
+  context.acquireBusy = o => { context.busyOwner = o; context.busy = true; };
+  context.releaseBusy = o => { if (context.busyOwner === o || !context.busyOwner) { context.busyOwner = ""; context.busy = false; } };
+  return withBusyStubs({ context, onExited: processExitHandler("startupRecoveryProcess", context) });
 }
 
 function recoveryHarness(extra = {}) {
   const context = {
-    recoveryTimedOut: false,
+
     recoveryTimeout: { stop() {} },
     recoveryRunning: true,
     recoveryError: { text: "" },
@@ -52,7 +58,9 @@ function recoveryHarness(extra = {}) {
     ...extra,
   };
   context.root = context;
-  return { context, onExited: processExitHandler("recoveryProcess", context) };
+  context.acquireBusy = o => { context.busyOwner = o; context.busy = true; };
+  context.releaseBusy = o => { if (context.busyOwner === o || !context.busyOwner) { context.busyOwner = ""; context.busy = false; } };
+  return withBusyStubs({ context, onExited: processExitHandler("recoveryProcess", context) });
 }
 
 test("startup recovery failure preserves every stderr line", t => {

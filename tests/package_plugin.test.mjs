@@ -16,7 +16,7 @@ function sourceFixture(t, mutate = () => {}) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const source = path.join(root, "source");
   fs.mkdirSync(source);
-  for (const file of [...RUNTIME_FILES, "manifest.json", "README.md", "install-helper.sh", "package-plugin.sh", "install-local.sh"])
+  for (const file of [...RUNTIME_FILES, "manifest.json", "README.md", "install-helper.sh", "package-plugin.sh", "compile-gate.sh", "install-local.sh"])
     fs.copyFileSync(path.join(project, file), path.join(source, file));
   mutate(source);
   return { root, source };

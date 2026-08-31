@@ -21,7 +21,7 @@ test("local installer deploys all report components as a complete plugin", () =>
     fs.mkdirSync(bin);
     fs.mkdirSync(runtime);
     fs.mkdirSync(source);
-    for (const file of ["install-local.sh", "install-helper.sh", "package-plugin.sh", "manifest.json", "README.md", "Panel.qml", ...reportingFiles])
+    for (const file of ["install-local.sh", "install-helper.sh", "package-plugin.sh", "compile-gate.sh", "manifest.json", "README.md", "Panel.qml", ...reportingFiles])
       fs.copyFileSync(path.join(project, file), path.join(source, file));
     fs.writeFileSync(path.join(bin, "omarchy"), `#!/bin/sh
 set -eu
@@ -40,7 +40,7 @@ esac
     fs.writeFileSync(path.join(bin, "omarchy-shell"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
     const install = () => spawnSync("bash", [path.join(source, "install-local.sh")], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: root, XDG_RUNTIME_DIR: runtime },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: root, XDG_CONFIG_HOME: config, XDG_RUNTIME_DIR: runtime },
       encoding: "utf8",
     });
     const result = install();

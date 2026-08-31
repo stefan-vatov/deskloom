@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { withBusyStubs } from "./busy_stub.mjs";
 
 const source = fs.readFileSync(new URL("../Panel.qml", import.meta.url), "utf8");
 
@@ -40,14 +41,15 @@ function processExitHandler(id, context) {
 }
 
 function operationHarness() {
-  const context = {
+  const context = withBusyStubs({
     busy: false,
     helperInstalled: true,
     operationProcess: {},
     operationTimeout: { restart() {} },
     restoreReportPopup: { dismiss() {} },
+    logConsent() {},
     root: { helperProcessCommand: args => args },
-  };
+  });
   return { context, run: panelFunction("runOperation", context) };
 }
 
@@ -136,11 +138,11 @@ test("timeout cannot present a completed-looking payload as success", () => {
 test("only the login instance that restored shows a result", () => {
   for (const exitCode of [0, 75, 76]) {
     const shown = [];
-    const context = {
+    const context = withBusyStubs({
       root: { bootRestoreTimedOut: false, bootRestoreRetries: 3, bootRestorePreset: "coding",
         presentRestoreReport: (...args) => shown.push(args), refreshList() {} },
       bootRestoreTimeout: { stop() {} }, bootRestoreOutput: { text: "{}" }, bootRestoreError: { text: "" },
-    };
+    });
     processExitHandler("bootRestoreProcess", context)(exitCode);
     assert.equal(shown.length, exitCode === 0 ? 1 : 0);
     if (exitCode === 75) {
@@ -168,13 +170,13 @@ test("login safe skips use structured outcomes and do not retry", () => {
 test("manual completion reports restores, not saves or deletes", () => {
   for (const kind of ["restore", "replace", "save", "delete"]) {
     const shown = [];
-    const context = {
+    const context = withBusyStubs({
       root: { operationKind: kind, operationName: "coding", defaultPreset: "other",
         recoveryRunning: false, operationTimedOut: false,
         presentRestoreReport: (...args) => shown.push(args), refreshList() {}, removeSnapshot() {},
         operationSummary: () => "Done" },
       operationTimeout: { stop() {} }, operationOutput: { text: "{}" }, operationError: { text: "" },
-    };
+    });
     processExitHandler("operationProcess", context)(0);
     assert.equal(shown.length, kind === "restore" || kind === "replace" ? 1 : 0);
     assert.equal(context.root.operationKind, "");

@@ -36,6 +36,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
+import { withBusyStubs } from "./busy_stub.mjs";
 
 const source = fs.readFileSync(new URL("../Panel.qml", import.meta.url), "utf8");
 
@@ -64,29 +65,22 @@ function timerHandler(id, context) {
   return vm.runInNewContext(`(function() {${match[1]}\n})`, context);
 }
 
-// Concatenate the writer's string literal segments exactly as shipped
-// (the same extraction idiom panel_boot.test.mjs uses for the boot wrapper).
-function writerScript() {
-  const start = source.indexOf("var installCommand = ");
-  const end = source.indexOf("Quickshell.execDetached", start);
-  assert.ok(start >= 0 && end > start, "Panel must build installCommand before launch");
-  const segmentRe = /"((?:[^"\\]|\\.)*)"/g;
-  let script = "";
-  let segment;
-  while ((segment = segmentRe.exec(source.slice(start, end))) !== null)
-    script += JSON.parse(`"${segment[1]}"`);
-  return script;
-}
-
 function logger() {
   const lines = [];
-  return { lines, console: { log: (...args) => lines.push(args.join(" ")) } };
+  const api = {
+    lines,
+    console: { log: (...args) => lines.push(args.join(" ")) },
+    busyOwner: "",
+    acquireBusy: o => { api.busy = true; },
+    releaseBusy: o => { api.busy = false; },
+  };
+  return api;
 }
 
 function launchHarness({ busy = false, helperInstalled = false } = {}) {
   const events = [];
   const log = logger();
-  const context = {
+  const context = withBusyStubs({
     busy, helperInstalled,
     installerTimedOut: false,
     installerFinished: false,
@@ -99,7 +93,7 @@ function launchHarness({ busy = false, helperInstalled = false } = {}) {
     Quickshell: { execDetached: argv => { events.push("exec-detached"); return argv; } },
     installPoll: { start: () => events.push("poll-start") },
     installTimeout: { start: () => events.push("timeout-start") },
-  };
+  });
   Object.defineProperty(context, "installerLaunched", {
     get() { return this._launched === true; },
     set(value) { events.push(value ? "launched" : "launch-cleared"); this._launched = value === true; },
@@ -122,6 +116,18 @@ test("writer orders lock acquisition, stale-result removal, installer run, and a
   assert.ok(stage < publish, "publication must be an atomic rename of the staged verdict");
   assert.ok(script.includes("helper-install-result-$1"), "the result file must be attempt-scoped");
 });
+
+function writerScript() {
+  const start = source.indexOf("var installCommand = ");
+  const end = source.indexOf("Quickshell.execDetached", start);
+  assert.ok(start >= 0 && end > start, "Panel must build installCommand before launch");
+  const segmentRe = /"((?:[^"\\]|\\.)*)"/g;
+  let script = "";
+  let segment;
+  while ((segment = segmentRe.exec(source.slice(start, end))) !== null)
+    script += JSON.parse(`"${segment[1]}"`);
+  return script;
+}
 
 test("the result reader only cats an attempt-scoped regular file", () => {
   const block = source.split("  function checkInstallerResult(")[1];
