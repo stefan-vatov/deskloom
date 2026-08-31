@@ -48,12 +48,13 @@ binary_is_ready() {
 
 destination_is_ready() {
   local expected actual
-  binary_is_ready "$destination" || return 1
   [ -f "$destination_marker" ] || return 1
   [ ! -L "$destination_marker" ] || return 1
   expected=$(cat -- "$destination_marker")
   actual=$(sha256sum -- "$destination" | cut -d' ' -f1)
-  [ "$expected" = "$expected_source_commit $actual" ]
+  [ "$expected" = "$expected_source_commit $actual" ] || return 1
+  # Provenance is proven: only the pinned, digest-verified bytes may run.
+  binary_is_ready "$destination"
 }
 
 source_is_expected() {

@@ -239,3 +239,36 @@ test("symlinked destination directories are rejected before building", t => {
   assert.equal(fs.existsSync(f.calls), false);
   assert.deepEqual(fs.readdirSync(outside), []);
 });
+
+test("an unproven existing binary is never executed by the readiness check", t => {
+  const f = fixture(t);
+  const witness = path.join(f.root, "witness");
+  const binary = path.join(f.binary);
+  fs.mkdirSync(path.dirname(binary), { recursive: true });
+  fs.writeFileSync(binary, `#!/bin/sh\necho executed >> '${witness}'\ncase "$1" in --version) echo 'hyprloom ${version}';; --help) exit 0;; esac\n`, { mode: 0o755 });
+  // No marker at all: provenance is unknown, so the bytes must not run.
+
+  const result = f.run();
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(witness), false, "unproven bytes must not be executed");
+  // The installer must not report the unproven binary as already installed.
+  assert.doesNotMatch(result.stdout || "", /already installed/);
+});
+
+test("a proven binary is behavior-checked after its digest verifies", t => {
+  const f = fixture(t);
+  f.seedInstalled(true);
+  const witness = path.join(f.root, "witness");
+  fs.appendFileSync(f.binary, `echo executed >> '${witness}'\n`);
+  // Re-seal the digest so provenance still matches the appended bytes.
+  const pin = script.match(/readonly expected_source_commit="([^"]+)"/)[1];
+  const hash = createHash("sha256").update(fs.readFileSync(f.binary)).digest("hex");
+  fs.writeFileSync(f.marker, `${pin} ${hash}\n`, { mode: 0o600 });
+
+  const result = f.run();
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /already installed/);
+  assert.equal(fs.existsSync(witness), true, "proven bytes are behavior-checked");
+});

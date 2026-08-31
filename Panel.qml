@@ -110,15 +110,17 @@ Panel {
   implicitHeight: button.implicitHeight
 
   function helperReadyCheck() {
-    return "test -x \"$HOME/.local/bin/hyprloom\""
+    // Provenance before behavior: the marker and digest are verified without
+    // executing anything; only digest-proven bytes are run for version/help.
+    return "test -f \"$HOME/.local/bin/.hyprloom.sha256\""
+      + " && [ \"$(cat -- \"$HOME/.local/bin/.hyprloom.sha256\")\" = \""
+      + root.helperSourceCommit
+      + " $(sha256sum -- \"$HOME/.local/bin/hyprloom\" | cut -d' ' -f1)\" ]"
+      + " && test -x \"$HOME/.local/bin/hyprloom\""
       + " && [ \"$(\"$HOME/.local/bin/hyprloom\" --version 2>/dev/null)\" = \"hyprloom "
       + root.helperVersion
       + "\" ]"
       + " && \"$HOME/.local/bin/hyprloom\" --help >/dev/null 2>&1"
-      + " && test -f \"$HOME/.local/bin/.hyprloom.sha256\""
-      + " && [ \"$(cat -- \"$HOME/.local/bin/.hyprloom.sha256\")\" = \""
-      + root.helperSourceCommit
-      + " $(sha256sum -- \"$HOME/.local/bin/hyprloom\" | cut -d' ' -f1)\" ]"
   }
 
   function helperProcessCommand(args) {

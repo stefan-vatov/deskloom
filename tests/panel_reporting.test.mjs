@@ -180,3 +180,16 @@ test("manual completion reports restores, not saves or deletes", () => {
     assert.equal(context.root.operationKind, "");
   }
 });
+
+test("helper readiness proves provenance before executing the candidate", () => {
+  const ready = source.match(/function helperReadyCheck\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(ready, "Panel must expose helperReadyCheck");
+  const body = ready[1];
+  const markerAt = body.indexOf(".hyprloom.sha256");
+  const digestAt = body.indexOf("sha256sum");
+  const versionAt = body.indexOf("--version");
+  const helpAt = body.indexOf("--help");
+  assert.ok(markerAt >= 0 && digestAt > markerAt, "marker must be checked before the digest");
+  assert.ok(digestAt >= 0 && versionAt > digestAt, "the candidate may execute only after its digest verifies");
+  assert.ok(helpAt > versionAt);
+});
