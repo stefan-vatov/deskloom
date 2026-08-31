@@ -188,3 +188,9 @@ test("view reopen cannot turn a consumed token back into armed consent", t => {
   assert.equal(reopened.pendingDeleteName, "");
   assert.notEqual(h.context.statusText, "Click Replace again to close current windows.");
 });
+
+test("the helper install command targets the canonical omarchy plugin path", () => {
+  assert.ok(source.includes('installer=\\"$HOME/.config/omarchy/plugins/thethracian.deskloom/install-helper.sh\\"'));
+  assert.equal(source.includes("XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins"), false,
+    "the helper installer must not live under an XDG-derived plugin path");
+});

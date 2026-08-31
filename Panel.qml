@@ -341,7 +341,7 @@ Panel {
       + "result_file=\"$lock_dir/helper-install-result-$1\"; "
       + "if [ -L \"$result_file\" ] || [ -e \"$result_file\" ] && [ ! -f \"$result_file\" ]; then exit 1; fi; "
       + "rm -f \"$result_file\"; "
-      + "installer=\"${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/thethracian.deskloom/install-helper.sh\"; "
+      + "installer=\"$HOME/.config/omarchy/plugins/thethracian.deskloom/install-helper.sh\"; "
       + "if [ ! -x \"$installer\" ]; then code=1; result=failure; "
       + "elif \"$installer\"; then code=0; result=success; "
       + "else code=$?; result=failure; fi; "

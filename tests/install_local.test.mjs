@@ -32,11 +32,13 @@ function seedCheckout(dir) {
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "deskloom-install-local-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const configRoot = path.join(root, "config");
+  const home = path.join(root, "home");
+  const configRoot = path.join(home, ".config");
   const stateDir = path.join(root, "state");
   const runDir = path.join(root, "run");
   const bin = path.join(root, "bin");
   fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
   const calls = path.join(root, "omarchy.jsonl");
 
   const fakeOmarchy = `#!${process.execPath}
@@ -133,7 +135,7 @@ process.exit(0);
     ], {
       env: {
         PATH: `${bin}:/usr/bin:/bin`,
-        XDG_CONFIG_HOME: configRoot,
+        HOME: home,
         XDG_STATE_HOME: stateDir,
         XDG_RUNTIME_DIR: runDir,
         TEST_CALLS: calls,
@@ -146,7 +148,7 @@ process.exit(0);
     });
   }
 
-  return { root, configRoot, stateDir, backupRoot, marker, target, registry, seedMarker, seedTarget, seedBackup, seedCheckout, snapshot, readCalls, run };
+  return { root, home, configRoot, stateDir, backupRoot, marker, target, registry, seedMarker, seedTarget, seedBackup, seedCheckout, snapshot, readCalls, run };
 }
 
 test("recovery refuses to delete the restored prior plugin when a named backup is missing", t => {
@@ -515,16 +517,16 @@ test("refuses to install when the live target sits inside the checkout", t => {
   const f = fixture(t);
   const checkout = path.join(f.root, "checkout");
   seedCheckout(checkout);
-  const nestedConfig = path.join(checkout, "config");
+  const nestedHome = path.join(checkout, "home");
   const before = f.snapshot(checkout);
   const script = path.join(checkout, "install-local.sh");
 
-  const result = f.run({ XDG_CONFIG_HOME: nestedConfig }, script);
+  const result = f.run({ HOME: nestedHome }, script);
 
   assert.notEqual(result.status, 0, result.stderr);
   assert.match(result.stderr, /live plugin target/);
   assert.deepEqual(f.snapshot(checkout), before);
-  assertNoSideEffects({ ...f, configRoot: nestedConfig, marker: path.join(nestedConfig, "omarchy", ".deskloom-rollback", "transaction"), readCalls: f.readCalls });
+  assertNoSideEffects({ ...f, configRoot: nestedHome + "/.config", marker: path.join(nestedHome, ".config", "omarchy", ".deskloom-rollback", "transaction"), readCalls: f.readCalls });
 });
 
 test("refuses to install from a checkout inside the live target", t => {
@@ -567,4 +569,32 @@ test("installs normally from a disjoint checkout", t => {
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(f.snapshot(checkout), before, "the source checkout is untouched");
   assert.ok(fs.existsSync(path.join(f.target, "manifest.json")));
+});
+
+test("installs into the canonical home registry even with XDG_CONFIG_HOME set", t => {
+  const f = fixture(t);
+  const xdg = path.join(f.root, "xdg");
+  fs.mkdirSync(xdg, { recursive: true });
+
+  const result = f.run({ XDG_CONFIG_HOME: xdg });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(path.join(f.target, "manifest.json")), "canonical target must receive the install");
+  assert.equal(fs.existsSync(path.join(xdg, "omarchy")), false, "XDG config dir must stay untouched");
+  assert.equal(fs.existsSync(path.join(xdg, ".deskloom-rollback")), false, "no rollback dir under XDG");
+});
+
+test("leaves a ghost install under a noncanonical XDG directory untouched but says so", t => {
+  const f = fixture(t);
+  const xdg = path.join(f.root, "xdg");
+  const ghost = path.join(xdg, "omarchy", "plugins", "thethracian.deskloom");
+  fs.mkdirSync(ghost, { recursive: true });
+  fs.writeFileSync(path.join(ghost, "GHOST.txt"), "stale copy\n");
+  const before = f.snapshot(ghost);
+
+  const result = f.run({ XDG_CONFIG_HOME: xdg });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /XDG_CONFIG_HOME/);
+  assert.deepEqual(f.snapshot(ghost), before, "the ghost install must be left untouched");
 });

@@ -2,10 +2,21 @@
 set -euo pipefail
 
 source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-config_root="${XDG_CONFIG_HOME:-$HOME/.config}"
+# Omarchy's plugin registry, catalog, and update tooling scan
+# $HOME/.config/omarchy/plugins unconditionally; they do not follow
+# XDG_CONFIG_HOME. Installing anywhere else produces a tree the shell never
+# loads. XDG state/runtime directories keep their base-directory contracts.
+config_root="$HOME/.config"
 target_dir="$config_root/omarchy/plugins/thethracian.deskloom"
 target_parent=$(dirname -- "$target_dir")
 umask 077
+
+if [ -n "${XDG_CONFIG_HOME:-}" ] && [ "$(realpath -m -- "$XDG_CONFIG_HOME" 2>/dev/null)" != "$(realpath -m -- "$HOME/.config" 2>/dev/null)" ]; then
+  ghost_dir="$XDG_CONFIG_HOME/omarchy/plugins/thethracian.deskloom"
+  if [ -e "$ghost_dir" ] || [ -L "$ghost_dir" ]; then
+    echo "Note: an old Deskloom install exists under XDG_CONFIG_HOME ($ghost_dir). Omarchy scans only the canonical path ($target_dir), so the old copy was left untouched; remove it manually if it is no longer wanted." >&2
+  fi
+fi
 
 # Installing over the checkout the installer itself runs from would stage a
 # reduced runtime copy over the live directory and then delete the backup

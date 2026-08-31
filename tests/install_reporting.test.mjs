@@ -13,7 +13,9 @@ test("local installer deploys all report components as a complete plugin", () =>
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "deskloom-report-install-"));
   try {
     const bin = path.join(root, "bin");
-    const config = path.join(root, "config");
+    // The installer publishes into the canonical $HOME/.config registry; keep
+    // that inside the fixture by pointing HOME at the temp root.
+    const config = path.join(root, ".config");
     const runtime = path.join(root, "runtime");
     const source = path.join(root, "source");
     fs.mkdirSync(bin);
@@ -38,7 +40,7 @@ esac
     fs.writeFileSync(path.join(bin, "omarchy-shell"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
     const install = () => spawnSync("bash", [path.join(source, "install-local.sh")], {
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, XDG_CONFIG_HOME: config, XDG_RUNTIME_DIR: runtime },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: root, XDG_RUNTIME_DIR: runtime },
       encoding: "utf8",
     });
     const result = install();
