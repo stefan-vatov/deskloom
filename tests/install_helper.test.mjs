@@ -13,6 +13,15 @@ const pin = script.match(/readonly expected_source_commit="([^"]+)"/)[1];
 const version = script.match(/readonly expected_version="([^"]+)"/)[1];
 const repository = "https://github.com/stefan-vatov/hyprloom.git";
 
+// Fixture cargo call log: one argument per line, blank line between calls.
+function readCalls(file) {
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, "utf8")
+    .split("\n\n")
+    .map(block => block.split("\n").filter(Boolean))
+    .filter(args => args.length > 0);
+}
+
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "deskloom-cargo-test-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -27,16 +36,50 @@ function fixture(t) {
   const denied = path.join(root, "forbidden");
   for (const command of ["omarchy-pkg-aur-add", "yay", "pacman", "sudo"])
     fs.writeFileSync(path.join(bin, command), `#!/bin/sh\necho ${command} >> '${denied}'\nexit 1\n`, { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, "cargo"), `#!${process.execPath}
-const fs = require('node:fs'), path = require('node:path');
-const args = process.argv.slice(2);
-fs.appendFileSync(process.env.TEST_CARGO_CALLS, JSON.stringify(args) + '\\n');
-if (process.env.TEST_BUILD_FAIL === '1') process.exit(101);
-if (args[0] !== 'install') process.exit(2);
-const root = args[args.indexOf('--root') + 1];
-fs.mkdirSync(path.join(root, 'bin'), {recursive:true});
-fs.writeFileSync(path.join(root, 'bin/hyprloom'), '#!/bin/sh\\ncase "$1" in\\n--version) echo "hyprloom ' + (process.env.TEST_BAD_VERSION === '1' ? '0.0.0' : process.env.TEST_VERSION) + '";;\\n--help) exit 0;;\\n*) exit 2;;\\nesac\\n', {mode:0o755});
-if (process.env.TEST_DIRTY_DURING_BUILD === '1') fs.appendFileSync(args[args.indexOf('--path') + 1] + '/Cargo.toml', '\\n# changed during build\\n');
+  fs.writeFileSync(path.join(bin, "cargo"), `#!/bin/sh
+# Fixture cargo: records argv one argument per line with a blank line between
+# calls, then simulates the pinned-build outcomes the tests inject. POSIX sh
+# only: the sandbox shadows the Node runtime that wrote this file.
+set -u
+: "\${TEST_CARGO_CALLS:?}"
+{
+  for arg in "$@"; do
+    printf '%s\\n' "$arg"
+  done
+  printf '\\n'
+} >> "\$TEST_CARGO_CALLS" || exit 1
+if [ "\${TEST_BUILD_FAIL:-}" = "1" ]; then
+  exit 101
+fi
+[ "\${1:-}" = "install" ] || exit 2
+root=
+path=
+key=
+for arg in "$@"; do
+  case "\$key" in
+    --root) root=\$arg ;;
+    --path) path=\$arg ;;
+  esac
+  key=\$arg
+done
+[ -n "\$root" ] || exit 2
+if [ "\${TEST_DIRTY_DURING_BUILD:-}" = "1" ]; then
+  printf '\\n# changed during build\\n' >> "\$path/Cargo.toml" || exit 1
+fi
+version=\${TEST_VERSION:-0.0.0}
+if [ "\${TEST_BAD_VERSION:-}" = "1" ]; then
+  version=0.0.0
+fi
+mkdir -p "\$root/bin" || exit 1
+{
+  echo '#!/bin/sh'
+  echo 'case "\$1" in'
+  echo '  --version) echo "hyprloom '\$version'" ;;'
+  echo '  --help) exit 0 ;;'
+  echo '  *) exit 2 ;;'
+  echo 'esac'
+} > "\$root/bin/hyprloom" || exit 1
+chmod 0755 "\$root/bin/hyprloom" || exit 1
 `, { mode: 0o755 });
   function seedInstalled(valid = false) {
     fs.mkdirSync(path.dirname(binary), { recursive: true });
@@ -68,15 +111,39 @@ if (process.env.TEST_DIRTY_DURING_BUILD === '1') fs.appendFileSync(args[args.ind
     fs.writeFileSync(path.join(root, "install-helper.sh"), script.replace(pin, revision));
     return source;
   }
-  return { root, bin, binary, marker, calls, denied, seedInstalled, run, localCheckout };
+  return { root, home, bin, binary, marker, calls, denied, seedInstalled, run, localCheckout };
 }
+
+test("the cargo fixture runs inside the sandbox despite a shadowed HOME", t => {
+  const f = fixture(t);
+  const argv = ["install", "--git", "https://example.invalid/hyprloom.git", "--rev", "abc123",
+    "--bin", "hyprloom", "--locked", "--root", path.join(f.root, "preflight-install"),
+    "--target-dir", path.join(f.root, "preflight-target")];
+  const result = spawnSync("/usr/bin/bwrap", [
+    "--unshare-all", "--die-with-parent", "--new-session",
+    "--ro-bind", "/", "/", "--bind", f.root, f.root,
+    "--bind", f.home, process.env.HOME,
+    "--tmpfs", "/run", "--proc", "/proc", "--dev", "/dev",
+    path.join(f.bin, "cargo"), ...argv,
+  ], {
+    env: { HOME: process.env.HOME, PATH: `${f.bin}:/usr/bin:/bin`, TEST_CARGO_CALLS: f.calls,
+      TEST_VERSION: version },
+    encoding: "utf8", timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(readCalls(f.calls), [argv]);
+  const built = path.join(f.root, "preflight-install", "bin", "hyprloom");
+  const probe = spawnSync(built, ["--version"], { encoding: "utf8" });
+  assert.equal(probe.status, 0, probe.stderr);
+  assert.equal(probe.stdout.trim(), `hyprloom ${version}`);
+});
 
 test("uses pinned Cargo Git installation without package managers", t => {
   const f = fixture(t);
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
   assert.equal(fs.existsSync(f.denied), false);
-  const calls = fs.readFileSync(f.calls, "utf8").trim().split("\n").map(JSON.parse);
+  const calls = readCalls(f.calls);
   assert.equal(calls.length, 1);
   const args = calls[0];
   assert.equal(args[0], "install");
@@ -89,7 +156,7 @@ test("uses pinned Cargo Git installation without package managers", t => {
   const hash = createHash("sha256").update(fs.readFileSync(f.binary)).digest("hex");
   assert.equal(fs.readFileSync(f.marker, "utf8"), `${pin} ${hash}\n`);
   assert.equal(f.run().status, 0);
-  assert.equal(fs.readFileSync(f.calls, "utf8").trim().split("\n").length, 1);
+  assert.equal(readCalls(f.calls).length, 1);
 });
 
 test("a verified existing install needs no build or download", t => {
@@ -127,7 +194,7 @@ test("a clean explicit checkout uses Cargo path mode and leaves its target alone
   const source = f.localCheckout();
   const result = f.run({ DESKLOOM_HYPRLOOM_SOURCE: source });
   assert.equal(result.status, 0, result.stderr);
-  const args = JSON.parse(fs.readFileSync(f.calls, "utf8").trim());
+  const args = readCalls(f.calls)[0];
   assert.equal(args[args.indexOf("--path") + 1], source);
   assert.equal(args.includes("--git"), false);
   assert.equal(fs.existsSync(path.join(source, "target")), false);
