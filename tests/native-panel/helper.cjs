@@ -53,14 +53,30 @@ if (operation === 'list') {
     process.exit(1);
   }
   process.exit(0);
-} else if (operation === 'save' && ['native-save', 'failure', 'consent-save'].includes(name)) {
+} else if (operation === 'save' && ['native-save', 'failure', 'consent-save', 'barrier-save'].includes(name)) {
   assert.deepEqual(argv, ['save', name, '--force']);
   if (name === 'failure') {
     console.error('Synthetic save failure\n' + 'A detailed plain-text explanation <not markup>.\n'.repeat(24) + 'FINAL DIAGNOSTIC LINE');
     process.exit(1);
   }
+  // Deterministic pause barrier: hold the response until the barrier path
+  // exists, so scenarios can pause/release helper dispatch without sleeps.
+  const barrier = process.env.FIXTURE_BARRIER;
+  if (barrier && name === 'barrier-save') {
+    const deadline = Date.now() + 5000;
+    (function wait() {
+      if (!fs.existsSync(barrier)) {
+        if (Date.now() > deadline) process.exit(75);
+        return setTimeout(wait, 10);
+      }
+      fs.writeFileSync(process.env.FIXTURE_STATE, JSON.stringify({ name }));
+      console.log('Saved ' + name);
+      process.exit(0);
+    })();
+    return;
+  }
   fs.writeFileSync(process.env.FIXTURE_STATE, JSON.stringify({ name }));
-  console.log('Saved native-save');
+  console.log('Saved ' + name);
 } else if (operation === 'restore' && ['fixture', 'failure'].includes(name)) {
   assert.deepEqual(argv, ['restore', name, '--reconcile', '--report-json']);
   if (name === 'failure') {

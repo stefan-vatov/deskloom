@@ -51,7 +51,17 @@ namespace; they never replace your installed helper or invoke package managers.
 node --test tests/panel_consent.test.mjs tests/panel_reporting.test.mjs tests/install_reporting.test.mjs
 ./tests/reporting/run.sh
 node tests/native-panel/run.cjs
+node --test tests/native_harness.test.mjs
 ```
+
+The native suite runs through the hermetic harness (`tests/native-panel/harness.cjs`):
+a unique mode-0700 sandbox beneath `/tmp/$UID`, a preflight that aborts before
+launch when any mutable endpoint escapes the sandbox, schema-validated JSONL
+boundary traces, and cleanup on success, failure, and signals. Scenarios own
+their behavioral assertions; the harness owns isolation, ordering, tracing, and
+cleanup. `instances.qml` runs two unchanged production Panel instances across a
+deterministic helper-dispatch barrier. `KEEP_STAGE=1` preserves the sandbox for
+inspection; artifacts are otherwise disposed on every exit path.
 
 The local installer tests seed interrupted transaction states (marker phase,
 backup, target payloads) and assert the recovery decision table: a missing
@@ -101,7 +111,17 @@ To test an already installed matching helper:
 ```bash
 HYPRLOOM_BIN="$HOME/.local/bin/hyprloom" node --test tests/cli_report_contract.test.mjs
 DESKLOOM_TEST_INSTALLED_HELPER=1 node tests/native-panel/run.cjs
+node --test tests/native_harness.test.mjs
 ```
+
+The native suite runs through the hermetic harness (`tests/native-panel/harness.cjs`):
+a unique mode-0700 sandbox beneath `/tmp/$UID`, a preflight that aborts before
+launch when any mutable endpoint escapes the sandbox, schema-validated JSONL
+boundary traces, and cleanup on success, failure, and signals. Scenarios own
+their behavioral assertions; the harness owns isolation, ordering, tracing, and
+cleanup. `instances.qml` runs two unchanged production Panel instances across a
+deterministic helper-dispatch barrier. `KEEP_STAGE=1` preserves the sandbox for
+inspection; artifacts are otherwise disposed on every exit path.
 
 The native check preserves production command construction and readiness checks;
 it substitutes executables/storage outside that boundary. Old installed pins
