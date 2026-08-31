@@ -67,6 +67,18 @@ process.exit(process.env.TEST_OMARCHY_FAIL === "1" ? 1 : 0);
   const fakeShell = `#!${process.execPath}
 const fs = require("node:fs");
 fs.appendFileSync(process.env.TEST_CALLS, JSON.stringify(["omarchy-shell", ...process.argv.slice(2)]) + "\\n");
+const statusTarget = process.argv[2] ?? "";
+if (statusTarget.startsWith("thethracian.deskloom.") && process.argv[3] === "status") {
+  // Emulates the running shell's per-monitor reportingStatus IPC.
+  let componentUrl = "";
+  try {
+    const manifest = JSON.parse(fs.readFileSync(process.env.TEST_TARGET_DIR + "/manifest.json", "utf8"));
+    componentUrl = "file://" + process.env.TEST_TARGET_DIR + "/" + manifest.entryPoints.barWidget;
+  } catch {}
+  if (process.env.TEST_ACK_STALE === "1") componentUrl = "file:///stale/Panel.qml";
+  process.stdout.write(JSON.stringify({ componentUrl }));
+  process.exit(0);
+}
 if (process.argv.includes("rescanPlugins")) {
   if (process.env.TEST_KILL_AT_RESCAN === "1") process.kill(process.ppid, "SIGKILL");
   if (process.env.TEST_FAIL_RESCAN === "1") process.exit(1);
@@ -77,6 +89,12 @@ process.exit(0);
 `;
   fs.writeFileSync(path.join(bin, "omarchy"), fakeOmarchy, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, "omarchy-shell"), fakeShell, { mode: 0o755 });
+
+  const fakeHyprctl = `#!${process.execPath}
+const names = (process.env.TEST_MONITORS ?? "DP-1").split(",");
+process.stdout.write(JSON.stringify(names.map(n => ({ name: n }))));
+`;
+  fs.writeFileSync(path.join(bin, "hyprctl"), fakeHyprctl, { mode: 0o755 });
 
   const backupRoot = path.join(configRoot, "omarchy", ".deskloom-rollback");
   const marker = path.join(backupRoot, "transaction");
@@ -603,4 +621,28 @@ test("leaves a ghost install under a noncanonical XDG directory untouched but sa
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stderr, /XDG_CONFIG_HOME/);
   assert.deepEqual(f.snapshot(ghost), before, "the ghost install must be left untouched");
+});
+
+test("the install is acknowledged by the loaded component on every monitor", t => {
+  const f = fixture(t);
+  const result = f.run({ TEST_MONITORS: "DP-1,HEAD-1" });
+
+  assert.equal(result.status, 0, result.stderr);
+  const calls = f.readCalls();
+  const statusCalls = calls.filter(call => call[0] === "omarchy-shell" && call[1] === "thethracian.deskloom.DP-1" && call[2] === "status");
+  assert.equal(statusCalls.length >= 1, true, "each monitor's component must be probed");
+  assert.ok(fs.existsSync(path.join(f.target, "manifest.json")));
+  assert.equal(fs.existsSync(f.marker), false);
+});
+
+test("an unacknowledged component load rolls the install back", t => {
+  const f = fixture(t);
+  f.seedTarget({ "UNIQUE_OLD.txt": OLD_SENTINEL });
+
+  const result = f.run({ TEST_ACK_STALE: "1" });
+
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.equal(fs.readFileSync(path.join(f.target, "UNIQUE_OLD.txt"), "utf8"), OLD_SENTINEL,
+    "the prior install must be restored when the loaded component cannot be acknowledged");
+  assert.equal(fs.existsSync(f.marker), false, "a rolled-back install leaves no transaction marker");
 });

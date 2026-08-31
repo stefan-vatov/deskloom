@@ -531,6 +531,32 @@ if [ "$previous_enabled" = unknown ] \
   exit 1
 fi
 
+# Canon: registry reload logs alone are not proof of the loaded version.
+# When the plugin was previously enabled, require every connected monitor's
+# panel instance to acknowledge the exact new content-addressed component
+# before the transaction commits.
+if [ "$previous_enabled" != "false" ]; then
+  ack_ok=false
+  for ack_attempt in $(seq 1 12); do
+    ack_ok=true
+    while IFS= read -r monitor; do
+      [ -n "$monitor" ] || continue
+      reported_component=$(omarchy-shell "thethracian.deskloom.$monitor" status 2>/dev/null |
+        jq -r '.componentUrl // empty' 2>/dev/null) || reported_component=""
+      case "$reported_component" in
+        *"$runtime_entry") ;;
+        *) ack_ok=false ;;
+      esac
+    done < <(hyprctl monitors -j 2>/dev/null | jq -r '.[].name' 2>/dev/null)
+    [ "$ack_ok" = true ] && break
+    sleep 0.25
+  done
+  if [ "$ack_ok" != true ]; then
+    echo "The installed panel did not acknowledge the new component on every monitor; the previous install will be restored." >&2
+    exit 1
+  fi
+fi
+
 write_transaction_marker committed "$backup_name" "$previous_enabled"
 transaction_committed=true
 if [ -n "$backup_dir" ]; then
