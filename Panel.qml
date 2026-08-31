@@ -23,7 +23,36 @@ Panel {
   property bool installerLaunched: false
   property string installerResultAttempt: ""
   property int consentGeneration: 0
+  property bool listDispatched: false
+  property bool operationDispatched: false
+  property bool bootDispatched: false
+  property bool startupDispatched: false
+  property bool recoveryDispatched: false
+  property string listErrorText: ""
+  property string operationErrorText: ""
+  property string bootRestoreErrorText: ""
+  property string startupRecoveryErrorText: ""
+  property string recoveryErrorText: ""
 
+  // Authoritative dispatch: the pinned helper writes "dispatch: started" on
+  // stderr when it acquires its operation lock. Execution deadlines arm only
+  // then, so queue time behind another operation is never charged as a hang.
+  function noteHelperLine(channel, line) {
+    if (line === "") return
+    if (line.indexOf("dispatch: started") === 0) {
+      if (channel === "list") { listDispatched = true; listTimeout.restart() }
+      else if (channel === "operation") { operationDispatched = true; operationTimeout.restart() }
+      else if (channel === "boot") { bootDispatched = true; bootRestoreTimeout.restart() }
+      else if (channel === "startup") { startupDispatched = true; startupRecoveryTimeout.restart() }
+      else if (channel === "recovery") { recoveryDispatched = true; recoveryTimeout.restart() }
+      return
+    }
+    if (channel === "operation") operationErrorText += line + "\n"
+    else if (channel === "boot") bootRestoreErrorText += line + "\n"
+    else if (channel === "startup") startupRecoveryErrorText += line + "\n"
+    else if (channel === "recovery") recoveryErrorText += line + "\n"
+    else listErrorText += line + "\n"
+  }
   function logConsent(transition) {
     consentGeneration += 1
     console.log("consent generation " + consentGeneration + ": " + transition)
@@ -169,7 +198,8 @@ Panel {
     listTimedOut = false
     listProcess.command = root.helperProcessCommand(["list", "--json"])
     listProcess.running = true
-    listTimeout.restart()
+    listDispatched = false
+    listErrorText = ""
   }
 
   function acquireBusy(owner) {
@@ -204,7 +234,8 @@ Panel {
     root.statusText = "Checking for interrupted replacement…"
     startupRecoveryProcess.command = root.helperProcessCommand(["recover"])
     startupRecoveryProcess.running = true
-    startupRecoveryTimeout.restart()
+    startupDispatched = false
+    startupRecoveryTimeout.stop()
   }
 
   function persistSettings(values) {
@@ -350,7 +381,8 @@ Panel {
     ]
     bootRestoreTimedOut = false
     bootRestoreProcess.running = true
-    bootRestoreTimeout.restart()
+    bootDispatched = false
+    bootRestoreErrorText = ""
   }
 
   function openHelperInstaller() {
@@ -498,7 +530,8 @@ Panel {
     }
 
     operationProcess.running = true
-    operationTimeout.restart()
+    operationDispatched = false
+    operationErrorText = ""
   }
 
   function parseInventory(output) {
@@ -550,7 +583,7 @@ Panel {
 
   function operationSummary(preferError) {
     var output = String(operationOutput.text || "").trim()
-    var error = String(operationError.text || "").trim()
+    var error = String(operationErrorText || "").trim()
     var source = preferError && error !== "" ? error : (output !== "" ? output : error)
     if (preferError && source !== "") return source
     var firstLine = source.split("\n")[0].trim()
@@ -630,7 +663,8 @@ Panel {
     root.recoveryTimedOut = false
     recoveryProcess.command = root.helperProcessCommand(["recover"])
     recoveryProcess.running = true
-    recoveryTimeout.restart()
+    recoveryDispatched = false
+    recoveryErrorText = ""
   }
 
   Component.onCompleted: {
@@ -864,9 +898,9 @@ Panel {
       id: startupRecoveryOutput
       waitForEnd: true
     }
-    stderr: StdioCollector {
-      id: startupRecoveryError
-      waitForEnd: true
+    stderr: SplitParser {
+      splitMarker: "\n"
+      onRead: line => root.noteHelperLine("startup", line)
     }
     onExited: function(exitCode) {
       startupRecoveryTimeout.stop()
@@ -879,7 +913,7 @@ Panel {
       } else if (exitCode !== 0) {
         // Keep the complete helper diagnostic: the tail can carry the safety
         // snapshot name and the manual remediation steps.
-        var error = String(startupRecoveryError.text || "").trim()
+        var error = String(startupRecoveryErrorText || "").trim()
         root.statusText = "Startup recovery failed"
           + (error === "" ? ". Continuing carefully." : ": " + error)
       }
@@ -895,9 +929,9 @@ Panel {
       id: bootRestoreOutput
       waitForEnd: true
     }
-    stderr: StdioCollector {
-      id: bootRestoreError
-      waitForEnd: true
+    stderr: SplitParser {
+      splitMarker: "\n"
+      onRead: line => root.noteHelperLine("boot", line)
     }
     onExited: function(exitCode) {
       bootRestoreTimeout.stop()
@@ -925,14 +959,14 @@ Panel {
         root.statusText = "Default preset already restored this session."
       } else if (exitCode === 0) {
         releaseBusy("boot-restore")
-        root.presentRestoreReport(bootRestoreOutput.text, bootRestoreError.text, exitCode, root.bootRestorePreset, false)
+        root.presentRestoreReport(bootRestoreOutput.text, bootRestoreErrorText, exitCode, root.bootRestorePreset, false)
         root.refreshList()
       } else {
         var output = String(bootRestoreOutput.text || "")
-        var model = RestoreReport.parse(output, exitCode, bootRestoreError.text, root.bootRestorePreset)
+        var model = RestoreReport.parse(output, exitCode, bootRestoreErrorText, root.bootRestorePreset)
         var onlySafeSkips = model.available && model.counts.skipped > 0 && model.counts.failed === 0
         if (onlySafeSkips) {
-          root.presentRestoreReport(output, bootRestoreError.text, exitCode, root.bootRestorePreset, false)
+          root.presentRestoreReport(output, bootRestoreErrorText, exitCode, root.bootRestorePreset, false)
           root.refreshList()
           return
         }
@@ -943,7 +977,7 @@ Panel {
           bootRestoreRetryTimer.interval = 1000 * root.bootRestoreRetries
           bootRestoreRetryTimer.restart()
         } else {
-          root.presentRestoreReport(output, bootRestoreError.text, exitCode, root.bootRestorePreset, false)
+          root.presentRestoreReport(output, bootRestoreErrorText, exitCode, root.bootRestorePreset, false)
         }
       }
     }
@@ -955,9 +989,9 @@ Panel {
       id: listOutput
       waitForEnd: true
     }
-    stderr: StdioCollector {
-      id: listError
-      waitForEnd: true
+    stderr: SplitParser {
+      splitMarker: "\n"
+      onRead: line => root.noteHelperLine("list", line)
     }
     onExited: function(exitCode) {
       listTimeout.stop()
@@ -978,7 +1012,7 @@ Panel {
         root.parseInventory(listOutput.text)
       } else {
         root.snapshotListFailed = true
-        var error = String(listError.text || "").trim()
+        var error = String(listErrorText || "").trim()
         root.statusText = "Could not refresh snapshots"
           + (error === "" ? "." : ": " + error)
       }
@@ -994,9 +1028,9 @@ Panel {
       id: operationOutput
       waitForEnd: true
     }
-    stderr: StdioCollector {
-      id: operationError
-      waitForEnd: true
+    stderr: SplitParser {
+      splitMarker: "\n"
+      onRead: line => root.noteHelperLine("operation", line)
     }
     onExited: function(exitCode) {
       var completedKind = root.operationKind
@@ -1023,7 +1057,7 @@ Panel {
       releaseBusy("operation")
       var isRestore = completedKind === "restore" || completedKind === "replace"
       if (isRestore)
-        root.presentRestoreReport(operationOutput.text, operationError.text, exitCode, completedName, false)
+        root.presentRestoreReport(operationOutput.text, operationErrorText, exitCode, completedName, false)
       if (exitCode === 0) {
         if (completedKind === "delete") {
           root.removeSnapshot(completedName)
@@ -1067,9 +1101,9 @@ Panel {
       id: recoveryOutput
       waitForEnd: true
     }
-    stderr: StdioCollector {
-      id: recoveryError
-      waitForEnd: true
+    stderr: SplitParser {
+      splitMarker: "\n"
+      onRead: line => root.noteHelperLine("recovery", line)
     }
     onExited: function(exitCode) {
       recoveryTimeout.stop()
@@ -1084,7 +1118,7 @@ Panel {
         root.statusText = "Replace timed out; desktop recovery completed."
       } else {
         // Keep the complete helper diagnostic for the report surface.
-        var error = String(recoveryError.text || "").trim()
+        var error = String(recoveryErrorText || "").trim()
         root.statusText = "Desktop recovery failed"
           + (error === "" ? ". Try Restore again." : ": " + error)
       }

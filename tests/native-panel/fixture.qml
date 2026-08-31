@@ -65,10 +65,11 @@ ShellRoot {
           var operation = probes.findChild(panel, "operationProcess")
           check(reportPopup && lastButton && operation, "Missing full Panel probes")
           operation.stdout.streamFinished.connect(function() { harness.streamsFinished++ })
-          operation.stderr.streamFinished.connect(function() { harness.streamsFinished++ })
+          // stderr is a dispatch-aware SplitParser now; the stdout collector
+          // still pins the report-payload ordering invariant.
           operation.exited.connect(function() {
             harness.exits++
-            if (harness.streamsFinished !== harness.exits * 2) harness.streamOrderOk = false
+            if (harness.streamsFinished !== harness.exits) harness.streamOrderOk = false
           })
           check(!status().hasReport && status().counts === null, "Initial report should be empty")
           check(status().snapshotCount === 1 && status().snapshotsLoaded && !status().snapshotListFailed, "Initial list was not loaded")
@@ -76,7 +77,7 @@ ShellRoot {
           panel.runOperation(realCli ? "save" : "restore", realCli ? "Native Save" : "fixture")
           phase = realCli ? 7 : 1
         } else if (phase === 1 && exits === 1 && !panel.busy) {
-          check(reportPopup.open && !panel.opened, "Report did not take over popup")
+          check(reportPopup.open && !panel.opened, "Report did not take over popup: popup=" + reportPopup.open + " opened=" + panel.opened + " busy=" + panel.busy + " text=" + panel.statusText)
           check(reportPopup.report.available, "Collector output unavailable at exit")
           check(streamOrderOk, "Process exited before collectors finished")
           var success = status()

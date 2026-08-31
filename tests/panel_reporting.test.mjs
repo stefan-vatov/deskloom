@@ -75,7 +75,7 @@ test("read-only reporting diagnostics identify the loaded component and retained
 test("operation failures keep the complete diagnostic while success stays concise", () => {
   const summary = panelFunction("operationSummary", {
     operationOutput: { text: "Saved snapshot\nExtra detail" },
-    operationError: { text: "error: invalid command\nUsage: hyprloom COMMAND\nlast line" },
+    operationErrorText: "error: invalid command\nUsage: hyprloom COMMAND\nlast line",
   });
   assert.equal(summary(true), "error: invalid command\nUsage: hyprloom COMMAND\nlast line");
   assert.equal(summary(false), "Saved snapshot");
@@ -141,7 +141,7 @@ test("only the login instance that restored shows a result", () => {
     const context = withBusyStubs({
       root: { bootRestoreTimedOut: false, bootRestoreRetries: 3, bootRestorePreset: "coding",
         presentRestoreReport: (...args) => shown.push(args), refreshList() {} },
-      bootRestoreTimeout: { stop() {} }, bootRestoreOutput: { text: "{}" }, bootRestoreError: { text: "" },
+      bootRestoreTimeout: { stop() {} }, bootRestoreOutput: { text: "{}" }, bootRestoreErrorText: "",
     });
     processExitHandler("bootRestoreProcess", context)(exitCode);
     assert.equal(shown.length, exitCode === 0 ? 1 : 0);
@@ -159,7 +159,7 @@ test("login safe skips use structured outcomes and do not retry", () => {
     root: { bootRestoreTimedOut: false, bootRestoreRetries: 0, bootRestorePreset: "coding",
       presentRestoreReport: (...args) => shown.push(args), refreshList: () => { refreshed = true; } },
     RestoreReport: { parse: () => ({ available: true, counts: { skipped: 1, failed: 0 } }) },
-    bootRestoreTimeout: { stop() {} }, bootRestoreOutput: { text: "{}" }, bootRestoreError: { text: "" },
+    bootRestoreTimeout: { stop() {} }, bootRestoreOutput: { text: "{}" }, bootRestoreErrorText: "",
   };
   processExitHandler("bootRestoreProcess", context)(1);
   assert.equal(shown.length, 1);
@@ -175,7 +175,9 @@ test("manual completion reports restores, not saves or deletes", () => {
         recoveryRunning: false, operationTimedOut: false,
         presentRestoreReport: (...args) => shown.push(args), refreshList() {}, removeSnapshot() {},
         operationSummary: () => "Done" },
-      operationTimeout: { stop() {} }, operationOutput: { text: "{}" }, operationError: { text: "" },
+      operationErrorText: "",
+      operationOutput: { text: "{}" },
+      operationTimeout: { stop() {} }, operationError: { text: "" },
     });
     processExitHandler("operationProcess", context)(0);
     assert.equal(shown.length, kind === "restore" || kind === "replace" ? 1 : 0);

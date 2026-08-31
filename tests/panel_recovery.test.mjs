@@ -18,7 +18,7 @@ function startupHarness(extra = {}) {
   const context = {
 
     startupRecoveryTimeout: { stop() {} },
-    startupRecoveryError: { text: "" },
+    startupRecoveryErrorText: "",
     busy: false,
     statusText: "",
     refreshPending: false,
@@ -41,7 +41,7 @@ function recoveryHarness(extra = {}) {
 
     recoveryTimeout: { stop() {} },
     recoveryRunning: true,
-    recoveryError: { text: "" },
+    recoveryErrorText: "",
     busy: true,
     statusText: "",
     pendingDeleteName: "",
@@ -65,7 +65,7 @@ function recoveryHarness(extra = {}) {
 
 test("startup recovery failure preserves every stderr line", t => {
   const h = startupHarness({
-    startupRecoveryError: { text: "failed transaction: replace-42\nsafety snapshot: autosave-keep\ncmd: hyprloom restore autosave-keep\n" },
+    startupRecoveryErrorText: "failed transaction: replace-42\nsafety snapshot: autosave-keep\ncmd: hyprloom restore autosave-keep\n",
   });
   h.onExited(1);
   assert.match(h.context.statusText, /failed transaction: replace-42/);
@@ -74,7 +74,7 @@ test("startup recovery failure preserves every stderr line", t => {
 });
 
 test("startup recovery failure keeps a tail without a trailing newline", t => {
-  const h = startupHarness({ startupRecoveryError: { text: "line one\nfinal line no newline" } });
+  const h = startupHarness({ startupRecoveryErrorText: "line one\nfinal line no newline" });
   h.onExited(1);
   assert.match(h.context.statusText, /line one\nfinal line no newline/);
 });
@@ -88,7 +88,7 @@ test("startup recovery failure with empty stderr still explains continuation", t
 test("startup recovery timeout labels the evidence instead of quoting stderr", t => {
   const h = startupHarness({
     startupRecoveryTimedOut: true,
-    startupRecoveryError: { text: "partial bytes\n" },
+    startupRecoveryErrorText: "partial bytes\n",
   });
   h.onExited(1);
   assert.match(h.context.statusText, /timed out/);
@@ -97,7 +97,7 @@ test("startup recovery timeout labels the evidence instead of quoting stderr", t
 
 test("post-replace recovery failure preserves every stderr line", t => {
   const h = recoveryHarness({
-    recoveryError: { text: "desktop recovery incomplete\nmanual step: hyprloom reload\n" },
+    recoveryErrorText: "desktop recovery incomplete\nmanual step: hyprloom reload\n",
   });
   h.onExited(1);
   assert.match(h.context.statusText, /Desktop recovery failed/);
@@ -108,7 +108,7 @@ test("post-replace recovery failure preserves every stderr line", t => {
 
 test("post-replace recovery feeds the full diagnostic into the unavailable report", t => {
   const h = recoveryHarness({
-    recoveryError: { text: "chunk one\nchunk two without newline" },
+    recoveryErrorText: "chunk one\nchunk two without newline",
   });
   h.onExited(1);
   assert.ok(h.context.presented, "recovery must present an unavailable report");

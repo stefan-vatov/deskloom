@@ -4,6 +4,9 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const [operation, name] = process.argv.slice(2);
 const argv = process.argv.slice(2);
+if (operation !== '--version' && operation !== '--help') {
+  process.stderr.write('dispatch: started ' + operation + ' ' + (name ?? '') + '\n');
+}
 if (operation === '--version') { console.log('hyprloom ' + process.env.FIXTURE_VERSION); process.exit(0); }
 if (operation === '--help') process.exit(0);
 if (operation === 'cache-update') {
