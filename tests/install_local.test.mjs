@@ -14,6 +14,21 @@ const OLD_SENTINEL = "prior plugin payload unique to the previous install\n";
 // Runs the real installer in a private offline namespace. Every mutable path
 // (config, state, runtime dir) lives inside the fixture root and the omarchy
 // commands are fakes on PATH, so a sandbox run cannot touch the host install.
+// Seeds a minimal fake checkout: enough for the installer to identify its
+// own source directory and, for the disjoint control, to complete a real
+// install. Sentinels prove nothing destroyed it.
+function seedCheckout(dir) {
+  fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
+  for (const name of [
+    "install-local.sh", "install-helper.sh", "manifest.json", "README.md",
+    "Panel.qml", "RestoreReport.js", "RestoreReportView.qml", "RestoreReportPopup.qml",
+  ]) {
+    fs.copyFileSync(path.join(project, name), path.join(dir, name));
+  }
+  fs.writeFileSync(path.join(dir, "UNCOMMITTED.txt"), "unpublished work\n");
+  fs.writeFileSync(path.join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+}
+
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "deskloom-install-local-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -109,12 +124,12 @@ process.exit(0);
     return fs.readFileSync(calls, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
   }
 
-  function run(extra = {}) {
+  function run(extra = {}, scriptPath = installer) {
     return spawnSync("/usr/bin/bwrap", [
       "--unshare-all", "--die-with-parent", "--new-session",
       "--ro-bind", "/", "/", "--bind", root, root,
       "--tmpfs", "/run", "--proc", "/proc", "--dev", "/dev",
-      "/bin/bash", installer,
+      "/bin/bash", scriptPath,
     ], {
       env: {
         PATH: `${bin}:/usr/bin:/bin`,
@@ -131,7 +146,7 @@ process.exit(0);
     });
   }
 
-  return { root, backupRoot, marker, target, registry, seedMarker, seedTarget, seedBackup, snapshot, readCalls, run };
+  return { root, configRoot, stateDir, backupRoot, marker, target, registry, seedMarker, seedTarget, seedBackup, seedCheckout, snapshot, readCalls, run };
 }
 
 test("recovery refuses to delete the restored prior plugin when a named backup is missing", t => {
@@ -451,5 +466,105 @@ test("a failed registration rolls back and durably records the pending registry 
 
   const result = f.run();
   assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(path.join(f.target, "manifest.json")));
+});
+
+function assertNoSideEffects(f) {
+  assert.equal(fs.existsSync(path.join(f.stateDir, "deskloom")), false, "no install lock is created");
+  const leftovers = fs.existsSync(f.configRoot)
+    ? fs.readdirSync(f.configRoot).filter(name => name.startsWith(".thethracian.deskloom."))
+    : [];
+  assert.deepEqual(leftovers, [], "no staging directory is created");
+  assert.equal(fs.existsSync(f.marker), false, "no transaction marker is created");
+  assert.deepEqual(f.readCalls(), [], "no omarchy commands run");
+}
+
+test("refuses to install when the checkout is the live plugin target", t => {
+  const f = fixture(t);
+  seedCheckout(f.target);
+  const before = f.snapshot(f.target);
+  const script = path.join(f.target, "install-local.sh");
+
+  const result = f.run({}, script);
+
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.match(result.stderr, /live plugin target/);
+  assert.deepEqual(f.snapshot(f.target), before);
+  assertNoSideEffects(f);
+});
+
+test("refuses to install through a symlink alias of the live target", t => {
+  const f = fixture(t);
+  const checkout = path.join(f.root, "checkout");
+  seedCheckout(checkout);
+  fs.mkdirSync(path.join(f.configRoot, "omarchy", "plugins"), { recursive: true });
+  fs.symlinkSync(checkout, f.target);
+  const before = f.snapshot(checkout);
+  const script = path.join(checkout, "install-local.sh");
+
+  const result = f.run({}, script);
+
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.match(result.stderr, /live plugin target/);
+  assert.deepEqual(f.snapshot(checkout), before);
+  assert.equal(fs.readlinkSync(f.target), checkout);
+  assertNoSideEffects(f);
+});
+
+test("refuses to install when the live target sits inside the checkout", t => {
+  const f = fixture(t);
+  const checkout = path.join(f.root, "checkout");
+  seedCheckout(checkout);
+  const nestedConfig = path.join(checkout, "config");
+  const before = f.snapshot(checkout);
+  const script = path.join(checkout, "install-local.sh");
+
+  const result = f.run({ XDG_CONFIG_HOME: nestedConfig }, script);
+
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.match(result.stderr, /live plugin target/);
+  assert.deepEqual(f.snapshot(checkout), before);
+  assertNoSideEffects({ ...f, configRoot: nestedConfig, marker: path.join(nestedConfig, "omarchy", ".deskloom-rollback", "transaction"), readCalls: f.readCalls });
+});
+
+test("refuses to install from a checkout inside the live target", t => {
+  const f = fixture(t);
+  const nested = path.join(f.target, "checkout");
+  seedCheckout(nested);
+  const before = f.snapshot(f.target);
+  const script = path.join(nested, "install-local.sh");
+
+  const result = f.run({}, script);
+
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.match(result.stderr, /live plugin target/);
+  assert.deepEqual(f.snapshot(f.target), before);
+  assertNoSideEffects(f);
+});
+
+test("refuses to install through a lexical dot-segment alias of the live target", t => {
+  const f = fixture(t);
+  seedCheckout(f.target);
+  const before = f.snapshot(f.target);
+  const script = path.join(f.configRoot, "omarchy", "plugins", ".", "thethracian.deskloom", "install-local.sh");
+
+  const result = f.run({}, script);
+
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.match(result.stderr, /live plugin target/);
+  assert.deepEqual(f.snapshot(f.target), before);
+  assertNoSideEffects(f);
+});
+
+test("installs normally from a disjoint checkout", t => {
+  const f = fixture(t);
+  const checkout = path.join(f.root, "checkout");
+  seedCheckout(checkout);
+  const before = f.snapshot(checkout);
+
+  const result = f.run({}, path.join(checkout, "install-local.sh"));
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(f.snapshot(checkout), before, "the source checkout is untouched");
   assert.ok(fs.existsSync(path.join(f.target, "manifest.json")));
 });

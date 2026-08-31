@@ -7,6 +7,40 @@ target_dir="$config_root/omarchy/plugins/thethracian.deskloom"
 target_parent=$(dirname -- "$target_dir")
 umask 077
 
+# Installing over the checkout the installer itself runs from would stage a
+# reduced runtime copy over the live directory and then delete the backup
+# holding the only full copy of the source, including .git and uncommitted
+# work.  Omarchy's public Git plugins are cloned directly into the live
+# target, so refuse any physical overlap between the source checkout and the
+# target before creating directories, taking locks, staging bytes, or writing
+# a transaction marker.  Missing trailing components are allowed; symlinked
+# prefixes are resolved.
+install_source_path=$(realpath -m -- "$source_dir") || exit 1
+install_target_path=$(realpath -m -- "$target_dir") || exit 1
+refuse_source_target_overlap() {
+  local relationship="$1"
+  echo "Deskloom install: refused source-target overlap class=$relationship source_digest=$(printf '%s' "$install_source_path" | sha256sum | cut -c1-12) target_digest=$(printf '%s' "$install_target_path" | sha256sum | cut -c1-12)" >&2
+}
+case "$install_source_path" in
+  "$install_target_path")
+    refuse_source_target_overlap source-equals-target
+    echo "Refusing to install Deskloom: this checkout is the live plugin target. Run the installer from a separate checkout that is physically disjoint from the live plugin directory." >&2
+    exit 1
+    ;;
+  "$install_target_path"/*)
+    refuse_source_target_overlap source-contains-target
+    echo "Refusing to install Deskloom: the live plugin target is inside this checkout. Run the installer from a separate checkout that is physically disjoint from the live plugin directory." >&2
+    exit 1
+    ;;
+esac
+case "$install_target_path" in
+  "$install_source_path"/*)
+    refuse_source_target_overlap target-contains-source
+    echo "Refusing to install Deskloom: this checkout is inside the live plugin target. Run the installer from a separate checkout that is physically disjoint from the live plugin directory." >&2
+    exit 1
+    ;;
+esac
+
 ensure_no_symlink_ancestors() {
   local normalized component current=""
   normalized=$(realpath -m -s -- "$1")
