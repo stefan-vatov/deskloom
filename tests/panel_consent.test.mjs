@@ -32,6 +32,10 @@ function consentHarness() {
     consentLog: [],
     pendingDeleteName: "",
     pendingReplaceName: "",
+    pendingReplaceRevision: "",
+    pendingDeleteRevision: "",
+    pendingSaveName: "",
+    pendingSaveRevision: "",
     operationKind: "",
     operationName: "",
     operationTimedOut: false,
@@ -251,4 +255,38 @@ test("delete consent binds to the revision and guards the delete", () => {
   h.requestDelete("play");
   assert.deepEqual(Array.from(h.context.operationProcess.command).slice(-2),
     ["--if-revision", "bbbb2222bbbb2222"]);
+});
+
+test("a hidden normalized-name collision requires an explicit second confirmation", () => {
+  const h = consentHarness();
+  h.context.snapshots = [
+    { name: "tax-2025", windows: 4, created: "c", automatic: false, revision: "dddd4444dddd4444" },
+  ];
+  // "Tax 2025" normalizes onto the existing tax-2025 snapshot.
+  h.runOperation("save", "Tax 2025");
+  assert.equal(h.context.pendingSaveName, "Tax 2025", "the collision must arm a pending overwrite");
+  assert.equal(h.context.busy, false, "no overwrite may run from a single click");
+  assert.equal(h.context.operationProcess.command, undefined, "no mutation before the second confirmation");
+
+  h.runOperation("save", "Tax 2025");
+  assert.deepEqual(Array.from(h.context.operationProcess.command),
+    ["save", "tax-2025", "--force", "--if-revision", "dddd4444dddd4444"],
+    "the informed second click overwrites with a revision guard");
+  assert.equal(h.context.pendingSaveName, "", "the one-use confirmation is consumed");
+});
+
+test("an exact-name save overwrite keeps its single-click flow", () => {
+  const h = consentHarness();
+  h.context.snapshots = [{ name: "work", windows: 2, created: "c", automatic: false, revision: "eeee5555eeee5555" }];
+  h.runOperation("save", "work");
+  assert.deepEqual(Array.from(h.context.operationProcess.command).slice(0, 2), ["save", "work"],
+    "a deliberate same-name update needs no collision arm");
+  assert.equal(h.context.busy, true);
+});
+
+test("a collision with a nonexistent snapshot saves directly", () => {
+  const h = consentHarness();
+  h.runOperation("save", "fresh-name");
+  assert.deepEqual(Array.from(h.context.operationProcess.command).slice(0, 2), ["save", "fresh-name"]);
+  assert.equal(h.context.busy, true);
 });

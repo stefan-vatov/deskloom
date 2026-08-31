@@ -23,6 +23,8 @@ Panel {
   property bool installerLaunched: false
   property string installerResultAttempt: ""
   property int consentGeneration: 0
+  property string pendingSaveName: ""
+  property string pendingSaveRevision: ""
   property bool listDispatched: false
   property bool operationDispatched: false
   property bool bootDispatched: false
@@ -497,6 +499,23 @@ Panel {
         statusText = "Use a unique name; '.', '..', autosave names, and names over 128 characters are reserved."
         return
       }
+      // A visible input that maps onto a differently-named existing snapshot
+      // is a hidden collision: disclose it and require a second Save click.
+      var overwriteTarget = snapshots.find(function (s) {
+        return s.name === operationArgument && s.name !== name
+      })
+      if (overwriteTarget) {
+        if (pendingSaveName !== name) {
+          pendingSaveName = name
+          pendingSaveRevision = overwriteTarget.revision ?? ""
+          statusText = "'" + name + "' will overwrite the existing snapshot '" + operationArgument
+            + "'. Click Save again to overwrite it."
+          logConsent("armed-collision-overwrite")
+          return
+        }
+        logConsent("confirmed-collision-overwrite")
+        pendingSaveName = ""
+      }
     }
 
     // Destructive confirmation is a one-use consent capability.  Consuming
@@ -507,6 +526,7 @@ Panel {
     // longer matches what the user confirmed.
     var armedReplaceRevision = pendingReplaceRevision
     var armedDeleteRevision = pendingDeleteRevision
+    var armedSaveRevision = pendingSaveRevision
     if (kind === "replace" || kind === "delete") {
       if (revisionOf(operationArgument) !== armedReplaceRevision
         && revisionOf(operationArgument) !== armedDeleteRevision) {
@@ -524,6 +544,7 @@ Panel {
     pendingReplaceName = ""
     pendingDeleteRevision = ""
     pendingReplaceRevision = ""
+    pendingSaveRevision = ""
 
     operationKind = kind
     operationName = operationArgument
@@ -532,7 +553,9 @@ Panel {
     statusText = "Working…"
 
     if (kind === "save") {
-      operationProcess.command = root.helperProcessCommand(["save", operationArgument, "--force"])
+      var saveArgs = ["save", operationArgument, "--force"]
+      if (armedSaveRevision !== "") saveArgs.push("--if-revision", armedSaveRevision)
+      operationProcess.command = root.helperProcessCommand(saveArgs)
     } else if (kind === "restore") {
       restoreReportPopup.dismiss()
       operationProcess.command = root.helperProcessCommand(["restore", name, "--reconcile", "--report-json"])

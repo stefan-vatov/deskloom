@@ -44,6 +44,7 @@ function operationHarness() {
   const context = withBusyStubs({
     busy: false,
     helperInstalled: true,
+    pendingSaveRevision: "",
     pendingReplaceRevision: "",
     pendingDeleteRevision: "",
     operationProcess: {},
