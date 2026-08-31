@@ -298,7 +298,7 @@ Panel {
         + "else claim_key=\"${session_id:-$instance_id}\"; fi; "
         + "if [ -f \"$claim_file\" ]; then previous=\"\"; previous_status=\"\"; "
         + "{ IFS= read -r previous || true; IFS= read -r previous_status || true; } < \"$claim_file\"; "
-        + "if [ \"$previous\" = \"$claim_key\" ] && [ \"$previous_status\" = complete ]; then exit 76; fi; fi; "
+        + "if [ \"$previous\" = \"$claim_key\" ] && { [ \"$previous_status\" = complete ] || [ \"$previous_status\" = attempted ]; }; then exit 76; fi; fi; "
         + "temporary=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
         + "printf \"%s\\n%s\\n\" \"$claim_key\" in-progress > \"$temporary\"; chmod 600 \"$temporary\"; "
         + "mv -f \"$temporary\" \"$claim_file\"; "
@@ -306,15 +306,16 @@ Panel {
         + "cleanup() { status=$?; "
         + "if [ -n \"$child_pid\" ]; then kill -TERM \"$child_pid\" 2>/dev/null || true; "
         + "wait \"$child_pid\" 2>/dev/null || true; fi; "
-        + "if [ \"$status\" -ne 0 ]; then rm -f -- \"$claim_file\" || true; fi; "
+        + "if [ -n \"$child_pid\" ]; then rm -f -- \"$claim_file\" || true; fi; "
         + "trap - EXIT TERM INT; exit \"$status\"; }; "
         + "trap cleanup EXIT TERM INT; "
-        + "\"$HOME/.local/bin/hyprloom\" restore \"$1\" --reconcile --report-json & child_pid=$!; "
+        + "\"$HOME/.local/bin/hyprloom\" restore \"$1\" --reconcile --report-json 9>&- & child_pid=$!; "
         + "if wait \"$child_pid\"; then restore_status=0; else restore_status=$?; fi; "
         + "child_pid=\"\"; "
-        + "if [ \"$restore_status\" -eq 0 ]; then completed=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
-        + "printf \"%s\\n%s\\n\" \"$claim_key\" complete > \"$completed\"; chmod 600 \"$completed\"; "
-        + "mv -f \"$completed\" \"$claim_file\"; fi; exit \"$restore_status\"",
+        + "claim_status=attempted; completed=$(mktemp \"$lock_dir/.boot-claim.XXXXXX\"); "
+        + "if [ \"$restore_status\" -eq 0 ]; then claim_status=complete; fi; "
+        + "printf \"%s\\n%s\\n\" \"$claim_key\" \"$claim_status\" > \"$completed\"; chmod 600 \"$completed\"; "
+        + "mv -f \"$completed\" \"$claim_file\"; exit \"$restore_status\"",
       "deskloom", root.bootRestorePreset
     ]
     bootRestoreTimedOut = false
