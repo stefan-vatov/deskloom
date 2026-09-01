@@ -207,8 +207,14 @@ Panel {
   }
 
   function acquireBusy(owner) {
+    // The busy flag is shared across all workflows. A second workflow must
+    // never silently steal another owner's claim: refusal is visible and the
+    // contender stays fully functional instead of erasing the owner's
+    // release. An empty owner is legacy/unowned and may be claimed outright.
+    if (busyOwner && busyOwner !== owner) return false
     busyOwner = owner
     busy = true
+    return true
   }
 
   function releaseBusy(owner) {
@@ -232,9 +238,9 @@ Panel {
   function startStartupRecovery() {
     if (!root.helperInstalled || root.startupRecoveryAttempted || startupRecoveryProcess.running)
       return
+    if (!acquireBusy("startup-recovery")) return
     root.startupRecoveryAttempted = true
     root.startupRecoveryTimedOut = false
-    acquireBusy("startup-recovery")
     root.statusText = "Checking for interrupted replacement…"
     startupRecoveryProcess.command = root.helperProcessCommand(["recover"])
     startupRecoveryProcess.running = true
@@ -324,7 +330,12 @@ Panel {
 
     bootRestorePreset = root.defaultPreset
     bootRestoreRetries = 0
-    acquireBusy("boot-restore")
+    if (!acquireBusy("boot-restore")) {
+      // Another workflow owns the panel: never steal its claim and never
+      // restore the preset underneath it. Say so and skip this boot attempt.
+      statusText = "Another operation is running; the default preset was not restored."
+      return
+    }
     statusText = "Restoring default preset…"
     bootHelperProbe.running = true
   }
@@ -549,7 +560,10 @@ Panel {
     operationKind = kind
     operationName = operationArgument
     operationTimedOut = false
-    acquireBusy("operation")
+    if (!acquireBusy("operation")) {
+      statusText = "Another operation is running."
+      return
+    }
     statusText = "Working…"
 
     if (kind === "save") {

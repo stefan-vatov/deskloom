@@ -27,13 +27,9 @@ function startupHarness(extra = {}) {
     root: null,
     ...extra,
   };
-    context.busyOwner = "";
-  context.acquireBusy = o => { context.busyOwner = o; context.busy = true; };
-  context.releaseBusy = o => { if (context.busyOwner === o || !context.busyOwner) { context.busyOwner = ""; context.busy = false; } };
   context.root = context;
-  context.acquireBusy = o => { context.busyOwner = o; context.busy = true; };
-  context.releaseBusy = o => { if (context.busyOwner === o || !context.busyOwner) { context.busyOwner = ""; context.busy = false; } };
-  return withBusyStubs({ context, onExited: processExitHandler("startupRecoveryProcess", context) });
+  withBusyStubs(context);
+  return { context, onExited: processExitHandler("startupRecoveryProcess", context) };
 }
 
 function recoveryHarness(extra = {}) {
@@ -58,10 +54,29 @@ function recoveryHarness(extra = {}) {
     ...extra,
   };
   context.root = context;
-  context.acquireBusy = o => { context.busyOwner = o; context.busy = true; };
-  context.releaseBusy = o => { if (context.busyOwner === o || !context.busyOwner) { context.busyOwner = ""; context.busy = false; } };
-  return withBusyStubs({ context, onExited: processExitHandler("recoveryProcess", context) });
+  withBusyStubs(context);
+  return { context, onExited: processExitHandler("recoveryProcess", context) };
 }
+
+test("busy ownership cannot be stolen by a second workflow", t => {
+  const c = withBusyStubs({ busy: false });
+  assert.equal(c.acquireBusy("boot-restore"), true, "an unowned flag may be claimed");
+  assert.equal(c.acquireBusy("operation"), false, "a second workflow must not steal the claim");
+  assert.equal(c.busyOwner, "boot-restore", "the claim must survive a refused acquisition");
+  assert.equal(c.busy, true);
+  c.releaseBusy("operation");
+  assert.equal(c.busy, true, "a non-owner release must be a no-op");
+  assert.equal(c.busyOwner, "boot-restore");
+  assert.equal(c.acquireBusy("boot-restore"), true, "the owner may reacquire its own claim");
+  c.releaseBusy("boot-restore");
+  assert.equal(c.busy, false);
+  assert.equal(c.busyOwner, "");
+  assert.equal(c.acquireBusy("operation"), true, "after release the flag is claimable again");
+});
+
+test("the panel must refuse to hand the busy flag to a second workflow", t => {
+  assert.match(source, /function acquireBusy\(owner\) \{[\s\S]*?busyOwner && busyOwner !== owner[\s\S]*?return false/);
+});
 
 test("startup recovery failure preserves every stderr line", t => {
   const h = startupHarness({

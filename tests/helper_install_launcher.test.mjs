@@ -71,8 +71,15 @@ function logger() {
     lines,
     console: { log: (...args) => lines.push(args.join(" ")) },
     busyOwner: "",
-    acquireBusy: o => { api.busy = true; },
-    releaseBusy: o => { api.busy = false; },
+    acquireBusy: o => {
+      if (api.busyOwner && api.busyOwner !== o) return false;
+      api.busyOwner = o;
+      api.busy = true;
+      return true;
+    },
+    releaseBusy: o => {
+      if (api.busyOwner === o || !api.busyOwner) { api.busyOwner = ""; api.busy = false; }
+    },
   };
   return api;
 }
