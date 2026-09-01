@@ -79,6 +79,21 @@ test("a permission mode change produces a new identity", t => {
   assert.notEqual(entryOf(after.staging), entryOf(before.staging), "mode changes are part of component identity");
 });
 
+test("a declared import escaping the bundle root fails the package", t => {
+  const f = sourceFixture(t, source => {
+    fs.writeFileSync(path.join(source, "OUTSIDE.qml"), "import QtQuick\nItem {}\n");
+    const panel = fs.readFileSync(path.join(source, "Panel.qml"), "utf8");
+    fs.writeFileSync(path.join(source, "Panel.qml"), 'import "../OUTSIDE.qml"\n' + panel);
+  });
+  const { result } = pack(t, f.source);
+  assert.notEqual(result.status, 0, "imports outside the bundle root must fail closed");
+  assert.match(result.stderr, /escapes the bundle root/);
+  assert.equal(fs.existsSync(path.join(f.source, "..")), true);
+  const staging = fs.readdirSync(path.join(f.source, "..")).find(d => d.startsWith("stage-"));
+  assert.equal(staging === undefined || fs.readdirSync(path.join(f.source, "..", staging)).length === 0,
+    true, "no outside file may be copied into a bundle");
+});
+
 test("a declared local import that is missing fails the package with an actionable error", t => {
   const f = sourceFixture(t, source => {
     fs.appendFileSync(path.join(source, "Panel.qml"), "\n// import \"Missing.js\" as Missing\n");
@@ -122,7 +137,18 @@ case "$1 $2" in
   *) exit 0 ;;
 esac
 `, { mode: 0o755 });
-  fs.writeFileSync(path.join(bin, "omarchy-shell"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, "omarchy-shell"), `#!/bin/sh
+# Answer the per-monitor acknowledgment probe with the live install's
+# content-addressed component, exactly as the production shell would.
+if [ "$2" = status ]; then
+  entry=$(jq -r '.entryPoints.barWidget' '${liveTarget}/manifest.json' 2>/dev/null)
+  jq -n --arg u "file://${liveTarget}/$entry" '{componentUrl: $u}'
+fi
+exit 0
+`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, "hyprctl"), `#!/bin/sh
+printf '%s\n' '[{"name":"DP-1"}]'
+`, { mode: 0o755 });
   const result = spawnSync("/usr/bin/bwrap", [
     "--unshare-all", "--die-with-parent", "--new-session",
     "--ro-bind", "/", "/", "--bind", f.root, f.root,

@@ -635,6 +635,18 @@ test("the install is acknowledged by the loaded component on every monitor", t =
   assert.equal(fs.existsSync(f.marker), false);
 });
 
+test("an install with no probed monitors is never acknowledged", t => {
+  const f = fixture(t);
+  f.seedTarget({ "UNIQUE_OLD.txt": OLD_SENTINEL });
+
+  const result = f.run({ TEST_MONITORS: "" });
+
+  assert.notEqual(result.status, 0, "zero probed monitors must not count as acknowledgment");
+  assert.equal(fs.readFileSync(path.join(f.target, "UNIQUE_OLD.txt"), "utf8"), OLD_SENTINEL,
+    "the prior install must be restored");
+  assert.equal(fs.existsSync(f.marker), false, "no marker may survive a rolled-back install");
+});
+
 test("an unacknowledged component load rolls the install back", t => {
   const f = fixture(t);
   f.seedTarget({ "UNIQUE_OLD.txt": OLD_SENTINEL });

@@ -46,6 +46,12 @@ collect_closure() {
     while IFS= read -r imp; do
       [ -n "$imp" ] || continue
       relimp=$(realpath -m --relative-to="$root" -- "$root/$dir/$imp")
+      case "$relimp" in
+        ../*|..)
+          echo "package-plugin: import '$imp' referenced by $rel escapes the bundle root" >&2
+          return 1
+          ;;
+      esac
       [ -n "${seen[$relimp]:-}" ] && continue
       if [ ! -f "$root/$relimp" ]; then
         echo "package-plugin: missing local import '$imp' referenced by $rel" >&2

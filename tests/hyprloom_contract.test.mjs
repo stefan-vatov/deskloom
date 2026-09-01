@@ -22,28 +22,46 @@ test("pinned hyprloom honors the machine inventory and revision contract", { ski
   const installer = fs.readFileSync(path.join(project, "install-helper.sh"), "utf8");
   const pin = installer.match(/readonly expected_source_commit="([^"]+)"/)[1];
   const head = spawnSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" }).stdout.trim();
-  const atHead = process.env.DESKLOOM_TEST_HYPRLOOM_HEAD === "1";
-  if (!atHead && head !== pin)
-    return t.skip(`hyprloom HEAD ${head.slice(0, 8)} differs from pin ${pin.slice(0, 8)}; run after pushing/rebasing`);
+  const logs = [`checkout HEAD ${head.slice(0, 8)}`, `pin ${pin.slice(0, 8)}`];
 
+  // Unique disposable workspace beneath /tmp/<uid>, cleaned by the test's
+  // after-hook.
+  const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
+  const parent = path.join(os.tmpdir(), String(uid));
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const root = fs.mkdtempSync(path.join(parent, "contract-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
-  // Build the pinned revision (cargo locks the target dir, so concurrent
-  // sessions serialize safely).
-  const build = spawnSync("cargo", ["build", "--quiet"], { cwd: source, encoding: "utf8", timeout: 600000 });
+  // Build the exact pinned tree: export it from git so newer work in the
+  // checkout can never contaminate the verification.
+  const buildSource = path.join(root, "pin-src");
+  if (head === pin) {
+    logs.push(`build source: HEAD == pin`);
+    fs.cpSync(source, buildSource, { recursive: true, filter: s => !s.includes(`${path.sep}target`) });
+  } else {
+    logs.push(`build source: exported pin (HEAD is ${head.slice(0, 8)})`);
+    const archive = spawnSync("git", ["-C", source, "archive", "--format=tar", pin],
+      { encoding: null, maxBuffer: 1 << 26 });
+    assert.equal(archive.status, 0, "git archive of the pin failed");
+    fs.mkdirSync(buildSource, { recursive: true });
+    fs.writeFileSync(path.join(root, "pin.tar"), archive.stdout);
+    spawnSync("tar", ["-xf", path.join(root, "pin.tar"), "-C", buildSource]);
+    fs.rmSync(path.join(root, "pin.tar"));
+  }
+
+  const build = spawnSync("cargo", ["build", "--quiet"], { cwd: buildSource, encoding: "utf8", timeout: 600000 });
   assert.equal(build.status, 0, build.stderr?.slice(-2000));
-  const binary = path.join(source, "target", "debug", "hyprloom");
+  const binary = path.join(buildSource, "target", "debug", "hyprloom");
 
   // Isolated storage: a private HOME whose hyprloom sessions dir we seed.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), String(process.getuid?.() ?? 1000) + "/contract-"));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const data = path.join(root, "data");
   const sessions = path.join(data, "hyprloom", "sessions");
   fs.mkdirSync(sessions, { recursive: true, mode: 0o700 });
-  const session = { name: "work", created_at: "2026-01-01T00:00:00Z", hyprland_version: "contract",
-    monitors: [], clients: [] };
-  fs.writeFileSync(path.join(sessions, "work.json"), JSON.stringify(session), { mode: 0o600 });
+  fs.writeFileSync(path.join(sessions, "work.json"), JSON.stringify({
+    name: "work", created_at: "2026-01-01T00:00:00Z", hyprland_version: "contract",
+    monitors: [], clients: [],
+  }), { mode: 0o600 });
 
-  const logs = [`build target: ${atHead ? "HEAD" : "pin"} ${head.slice(0, 8)}`];
   function run(args) {
     const result = spawnSync(binary, args, {
       env: { HOME: path.join(root, "home"), XDG_DATA_HOME: data, PATH: "/usr/bin:/bin", HYPRLOOM_SESSIONS_DIR: sessions },

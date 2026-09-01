@@ -37,7 +37,16 @@ case "$1 $2" in
   *) echo 'unexpected plugin mutation' >&2; exit 1 ;;
 esac
 `, { mode: 0o755 });
-    fs.writeFileSync(path.join(bin, "omarchy-shell"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, "omarchy-shell"), `#!/bin/sh
+# Answer the per-monitor acknowledgment probe with the live install's
+# content-addressed component, exactly as the production shell would.
+if [ "$2" = status ]; then
+  entry=$(jq -r '.entryPoints.barWidget' '$INSTALL_ROOT/omarchy/plugins/thethracian.deskloom/manifest.json' 2>/dev/null)
+  jq -n --arg u "file://$INSTALL_ROOT/omarchy/plugins/thethracian.deskloom/$entry" '{componentUrl: $u}'
+fi
+exit 0
+`.replaceAll("$INSTALL_ROOT", config), { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, "hyprctl"), "#!/bin/sh\nprintf '%s\\n' '[{\"name\":\"DP-1\"}]'\n", { mode: 0o755 });
 
     const install = () => spawnSync("bash", [path.join(source, "install-local.sh")], {
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: root, XDG_CONFIG_HOME: config, XDG_RUNTIME_DIR: runtime },

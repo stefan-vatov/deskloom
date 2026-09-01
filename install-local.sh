@@ -537,21 +537,28 @@ fi
 # before the transaction commits.
 if [ "$previous_enabled" != "false" ]; then
   ack_ok=false
+  monitors_probed=0
   for ack_attempt in $(seq 1 12); do
     ack_ok=true
+    monitors_probed=0
     while IFS= read -r monitor; do
       [ -n "$monitor" ] || continue
-      reported_component=$(omarchy-shell "thethracian.deskloom.$monitor" status 2>/dev/null |
+      monitors_probed=$((monitors_probed + 1))
+      reported_component=$(omarchy-shell "thethracian.deskloom.$monitor" status 2>/dev/null </dev/null |
         jq -r '.componentUrl // empty' 2>/dev/null) || reported_component=""
       case "$reported_component" in
         *"$runtime_entry") ;;
         *) ack_ok=false ;;
       esac
     done < <(hyprctl monitors -j 2>/dev/null | jq -r '.[].name' 2>/dev/null)
-    [ "$ack_ok" = true ] && break
+    # A monitor listing that yields nothing proves nothing: the component was
+    # never probed on any screen, so this attempt cannot acknowledge.
+    if [ "$ack_ok" = true ] && [ "$monitors_probed" -gt 0 ]; then
+      break
+    fi
     sleep 0.25
   done
-  if [ "$ack_ok" != true ]; then
+  if [ "$ack_ok" != true ] || [ "$monitors_probed" -eq 0 ]; then
     echo "The installed panel did not acknowledge the new component on every monitor; the previous install will be restored." >&2
     exit 1
   fi

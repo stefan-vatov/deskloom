@@ -43,12 +43,21 @@ process.exit(0);
   const fakeShell = `#!${process.execPath}
 const fs = require("node:fs");
 fs.appendFileSync(process.env.TEST_CALLS, JSON.stringify(["omarchy-shell", ...process.argv.slice(2)]) + "\\n");
+if (process.argv[3] === "status") {
+  const entry = JSON.parse(fs.readFileSync(process.env.TEST_TARGET_DIR + "/manifest.json", "utf8")).entryPoints.barWidget;
+  process.stdout.write(JSON.stringify({ componentUrl: "file://" + process.env.TEST_TARGET_DIR + "/" + entry }));
+  process.exit(0);
+}
 const targetExists = fs.existsSync(process.env.TEST_TARGET_DIR);
 fs.writeFileSync(process.env.TEST_REGISTRY, targetExists ? "registered\\n" : "unregistered\\n");
 process.exit(0);
 `;
+  const fakeHyprctl = `#!${process.execPath}
+process.stdout.write(JSON.stringify([{ name: "DP-1" }]));
+`;
   fs.writeFileSync(path.join(bin, "omarchy"), fakeOmarchy, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, "omarchy-shell"), fakeShell, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, "hyprctl"), fakeHyprctl, { mode: 0o755 });
 
   const target = path.join(configRoot, "omarchy", "plugins", "thethracian.deskloom");
   const backupRoot = path.join(configRoot, "omarchy", ".deskloom-rollback");
