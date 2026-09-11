@@ -34,6 +34,7 @@ set -eu
 case "$1" in
   clients) cat "$DESKLOOM_REPORT_FIXTURE/clients.json" ;;
   monitors) printf '%s\\n' '[{"id":0,"name":"DP-1","width":1920,"height":1080,"x":0,"y":0,"transform":0}]' ;;
+  getoption) [ "$2" = general.layout ]; printf '%s\\n' 'str: dwindle' 'set: true' ;;
   *) printf '%s\\n' "$*" >> "$DESKLOOM_REPORT_FIXTURE/unexpected"; exit 1 ;;
 esac
 `, { mode: 0o755 });

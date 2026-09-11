@@ -112,6 +112,14 @@ if [ "${1:-}" = "--check" ]; then
     echo "package-plugin: published runtime identity $actual does not match manifest identity $declared" >&2
     exit 1
   fi
+  if [ -f "$published_dir/Panel.qml" ]; then
+    collect_closure "$published_dir" "Panel.qml" || exit 1
+    source_identity=$(sorted_closure | compute_identity "$published_dir")
+    if [ "$source_identity" != "$declared" ]; then
+      echo "package-plugin: published runtime is stale; repackage the current panel sources" >&2
+      exit 1
+    fi
+  fi
   exit 0
 fi
 

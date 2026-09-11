@@ -4,9 +4,9 @@ Run `node tests/native-panel/run.cjs` from the repository root.
 
 Requires Bubblewrap, Quickshell, QtTest, Node.js, and installed Omarchy
 Commons/Ui. Each run uses private namespaces with no network, a read-only host
-filesystem, isolated XDG directories, and offscreen Qt. HOME retains its actual
-value; only the helper executable and marker are overlaid with test files in
-the private mount namespace. No display, compositor, D-Bus, or shell-init
+filesystem, isolated HOME/XDG directories, and offscreen Qt. The helper
+executable and marker are mounted read-only into that private HOME.
+No display, compositor, D-Bus, or shell-init
 environment is passed. The default suite runs only the fake helper.
 
 1. Observe same-URL component caching after a real subprocess rewrites a
@@ -42,10 +42,10 @@ run exits zero and prints four `NATIVE_PASS` markers.
 For the actual installed pinned CLI, also run:
 
 ```sh
-DESKLOOM_TEST_INSTALLED_HELPER=1 node tests/native-panel/run.cjs
+DESKLOOM_TEST_INSTALLED_HELPER=1 DESKLOOM_TEST_HELPER_ROOT="$HOME/.local" node tests/native-panel/run.cjs
 ```
 
-That adds a fifth run without overlaying the helper or marker. The real CLI
+That adds a run mounting the installed helper and marker read-only. The real CLI
 lists an old-format fixture, saves a new snapshot, and reports an existing
 window through the unchanged production panel. Snapshot/config storage is
 temporary; the fake compositor accepts only read queries and rejects all

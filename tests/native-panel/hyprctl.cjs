@@ -7,6 +7,8 @@ if (JSON.stringify(args) === JSON.stringify(['clients', '-j'])) {
   console.log(JSON.stringify([{ id: 0, name: 'DP-1', width: 1920, height: 1080, x: 0, y: 0, transform: 0 }]));
 } else if (JSON.stringify(args) === JSON.stringify(['version'])) {
   console.log('Hyprland fixture');
+} else if (JSON.stringify(args) === JSON.stringify(['getoption', 'general.layout'])) {
+  console.log('str: dwindle\nset: true');
 } else if (JSON.stringify(args) === JSON.stringify(['-j', 'getoption', 'decoration:rounding'])) {
   console.log(JSON.stringify({ int: 0 }));
 } else if (JSON.stringify(args) === JSON.stringify(['-j', 'getoption', 'general:gaps_out'])) {

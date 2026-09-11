@@ -5,7 +5,7 @@ umask 077
 readonly package_name="hyprloom"
 readonly expected_version="0.4.0-dev.2"
 readonly source_repository="https://github.com/stefan-vatov/hyprloom.git"
-readonly expected_source_commit="a9814911541a10cfccb0a58882d3b5235861dcb2"
+readonly expected_source_commit="1be72d8291f0b6af6212b180687eb3a8c037612a"
 readonly local_source="${DESKLOOM_HYPRLOOM_SOURCE:-}"
 readonly destination_dir="$HOME/.local/bin"
 readonly destination="$destination_dir/$package_name"

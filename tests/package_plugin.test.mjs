@@ -164,3 +164,19 @@ printf '%s\n' '[{"name":"DP-1"}]'
   const packaged = pack(t, f.source);
   assert.equal(localEntry, entryOf(packaged.staging), "local and packaged installs must not drift");
 });
+
+
+test("publication check rejects a bundle that predates the current panel source", t => {
+  const f = sourceFixture(t);
+  const { staging, result } = pack(t, f.source);
+  assert.equal(result.status, 0, result.stderr);
+  for (const file of RUNTIME_FILES) {
+    fs.copyFileSync(path.join(f.source, file), path.join(staging, file));
+  }
+  const current = spawnSync(packager, ["--check", staging], { encoding: "utf8" });
+  assert.equal(current.status, 0, current.stderr);
+  fs.appendFileSync(path.join(staging, "Panel.qml"), "\n// changed panel source\n");
+  const stale = spawnSync(packager, ["--check", staging], { encoding: "utf8" });
+  assert.notEqual(stale.status, 0);
+  assert.match(stale.stderr, /published runtime is stale/);
+});

@@ -110,7 +110,7 @@ To test an already installed matching helper:
 
 ```bash
 HYPRLOOM_BIN="$HOME/.local/bin/hyprloom" node --test tests/cli_report_contract.test.mjs
-DESKLOOM_TEST_INSTALLED_HELPER=1 node tests/native-panel/run.cjs
+DESKLOOM_TEST_INSTALLED_HELPER=1 DESKLOOM_TEST_HELPER_ROOT="$HOME/.local" node tests/native-panel/run.cjs
 node --test tests/native_harness.test.mjs
 ```
 
@@ -149,11 +149,16 @@ picks up a fresh component URL without a shell restart:
 ```bash
 ./package-plugin.sh . .
 ./package-plugin.sh --check .
+git add manifest.json
+git add -f "$(dirname "$(jq -r .entryPoints.barWidget manifest.json)")"
 ```
 
 The command discovers the declared local import closure, computes the bundle
 identity from all shipped bytes, modes, and paths, and rewrites the manifest
-atomically. Old runtime/ bundles are kept so a Git rollback still has its
+atomically. The active bundle must be committed with the manifest; `runtime/`
+is ignored by default. CI validates the bundle from a fresh checkout and
+compares its identity with the current panel sources. Old runtime/ bundles
+are kept locally so a Git rollback still has its
 matching bytes; prune superseded bundles only when no in-flight install can
 need them.
 

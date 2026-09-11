@@ -11,3 +11,5 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Check protocol synchronization
         run: python .ai/harder-to-fool/check_sync.py .ai/harder-to-fool/CODE.md AGENTS.md
+      - name: Validate the published runtime bundle
+        run: ./package-plugin.sh --check .

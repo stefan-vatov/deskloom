@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+
+- Updated the pinned Hyprloom helper to restore saved workspaces and monitors
+  on Lua-configured Hyprland, including workspaces absent just after login.
+
 ### Added
 
 - Added temporary, workspace-grouped restore reports after Open, Replace, and
