@@ -29,6 +29,9 @@ environment is passed. The default suite runs only the fake helper.
    Backspace, and save with Enter through the fake helper. Check click focus,
    returning from Settings, Escape, native window dismissal, and reopening
    during fade-out. Disabling the popup's keyboard grab must fail this scenario.
+   Require the native keyboard grab without PopupCard's Hyprland grab mode:
+   enabling both dismisses the popup on Hyprland. Check the requested mode
+   because HyprlandFocusGrab cannot activate under offscreen Qt.
 
 Production files remain byte-identical in both stages; existing objectName
 probes allow read-only lookup. Handlers and process collectors are unchanged.

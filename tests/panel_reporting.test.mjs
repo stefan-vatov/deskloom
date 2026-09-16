@@ -60,7 +60,9 @@ function operationHarness() {
 test("read-only reporting diagnostics identify the loaded component and retained result", () => {
   const context = {
     root: { pluginVersion: "fixture", helperVersion: "helper", helperSourceCommit: "source", reportScreenName: "DP-1", helperInstalled: true, busy: false,
-      snapshots: [{}], snapshotsLoaded: true, snapshotListFailed: false },
+      opened: true, snapshots: [{}], snapshotsLoaded: true, snapshotListFailed: false },
+    popup: { visible: true, backingWindowVisible: true },
+    nameInput: { activeFocus: true },
     Qt: { resolvedUrl: () => "file:///runtime/revision/Panel.qml" },
     restoreReportPopup: { open: false, report: { available: true, counts: { unchanged: 1, launched: 1 } } },
   };
@@ -70,6 +72,10 @@ test("read-only reporting diagnostics identify the loaded component and retained
   assert.equal(value.snapshotCount, 1);
   assert.equal(value.componentUrl, "file:///runtime/revision/Panel.qml");
   assert.equal(value.monitor, "DP-1");
+  assert.equal(value.panelOpen, true);
+  assert.equal(value.popupVisible, true);
+  assert.equal(value.popupMapped, true);
+  assert.equal(value.nameInputFocused, true);
   assert.equal(value.hasReport, true);
   assert.equal(value.reportOpen, false);
   assert.deepEqual(value.counts, { unchanged: 1, launched: 1 });

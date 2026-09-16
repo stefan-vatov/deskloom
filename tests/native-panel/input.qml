@@ -58,6 +58,10 @@ ShellRoot {
           panel.open()
           phase = 1
         } else if (phase === 1 && panel.snapshotActionsReady()) {
+          // Offscreen Qt cannot activate HyprlandFocusGrab. Check the
+          // requested grab modes too, so it cannot hide this conflict.
+          check(popup.grabFocus && popup.triggerMode !== "click",
+                "Native keyboard grab must not compete with PopupCard's Hyprland grab")
           check(input.visible && input.enabled && !input.readOnly, "Name input is not editable")
           check(input.activeFocus, "Name input has no keyboard focus after opening")
           probes.keyClick(Qt.Key_A, Qt.ControlModifier)

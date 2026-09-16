@@ -135,7 +135,8 @@ omarchy-shell thethracian.deskloom.DP-1 status
 
 Replace `DP-1` with your monitor name (URL-encoded if necessary). Diagnostics
 include the loaded component URL, plugin/helper versions, readiness, snapshot
-list state/count, and retained report counts. They expose no window titles and
+list state/count, popup open/mapped state, name-field focus, and retained report
+counts. They expose no window titles or typed names and
 do not start helper operations. Long operation errors remain selectable and
 scrollable in the panel; a failed listing is not an empty snapshot collection.
 
