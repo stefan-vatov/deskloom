@@ -25,6 +25,10 @@ environment is passed. The default suite runs only the fake helper.
    failed save, and complete selectable/scrollable multiline diagnostics.
    Check collector ordering and read-only status. Login restore is disabled;
    installer and boot launch entry points throw if called.
+5. Type into the production name field with QtTest key events, edit with
+   Backspace, and save with Enter through the fake helper. Check click focus,
+   returning from Settings, Escape, native window dismissal, and reopening
+   during fade-out. Disabling the popup's keyboard grab must fail this scenario.
 
 Production files remain byte-identical in both stages; existing objectName
 probes allow read-only lookup. Handlers and process collectors are unchanged.
@@ -33,11 +37,11 @@ save/restore cases, and the temporary cache rewrite. Unknown commands fail
 closed. Each Quickshell run
 has a 15-second outer timeout; temporary files are removed on completion.
 
-This checks Qt lifecycle and real pipe collection, not compositor focus or live
-desktop restoration. Offscreen window-mask and unavailable Hyprland focus-grab
-warnings are expected. A cache observation is reported rather than assuming
+This checks Qt keyboard events, popup lifecycle, and real pipe collection,
+not compositor focus or live desktop restoration. Offscreen window-mask and
+unavailable Hyprland focus-grab warnings are expected. A cache observation is reported rather than assuming
 all future Qt/Quickshell versions must retain stale components. A successful
-run exits zero and prints four `NATIVE_PASS` markers.
+run exits zero and prints a `NATIVE_PASS` marker for each scenario.
 
 For the actual installed pinned CLI, also run:
 

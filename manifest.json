@@ -11,7 +11,7 @@
   ],
   "keepLoaded": true,
   "entryPoints": {
-    "barWidget": "runtime/91aaa73d3b3d677aebbbb6d4a2028f48e0d196f0e098c916c6c2611b446ae436/Panel.qml"
+    "barWidget": "runtime/fe76b5d230c922b93cf81b17dc279b9eb48d9185ec2529b41bc5176f056eaf38/Panel.qml"
   },
   "barWidget": {
     "displayName": "Deskloom",

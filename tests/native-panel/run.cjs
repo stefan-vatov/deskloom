@@ -16,6 +16,7 @@ const { env, stage } = harness;
     await harness.run('compile.qml');
     await harness.run('commands.qml');
     await harness.run('fixture.qml');
+    await harness.run('input.qml');
     await harness.run('consent.qml');
     await harness.run('recovery.qml', { extraEnv: { FIXTURE_RECOVER_FAIL: '1' } });
     await harness.run('launcher.qml');

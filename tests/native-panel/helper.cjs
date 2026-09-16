@@ -57,7 +57,7 @@ if (operation === 'list') {
     process.exit(1);
   }
   process.exit(0);
-} else if (operation === 'save' && ['native-save', 'failure', 'consent-save', 'barrier-save'].includes(name)) {
+} else if (operation === 'save' && ['native-save', 'input-save', 'failure', 'consent-save', 'barrier-save'].includes(name)) {
   assert.deepEqual(argv, ['save', name, '--force']);
   if (name === 'failure') {
     console.error('Synthetic save failure\n' + 'A detailed plain-text explanation <not markup>.\n'.repeat(24) + 'FINAL DIAGNOSTIC LINE');
